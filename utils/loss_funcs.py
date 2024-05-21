@@ -59,7 +59,21 @@ def _anchored_l2(xi, xj, ui, uj, dt, dx, coeff):
     # Temporal evolution
     #us = (ui[...,1].unsqueeze(0) - uj[...,0].unsqueeze(1)).norm(dim=-1) # Temporal evolution
     #us = (ui[...,-1].unsqueeze(0) - uj[...,-2].unsqueeze(1)).norm(dim=-1) # Temporal evolution
-    us = (ui[...,-1].unsqueeze(0) - uj[...,-2].unsqueeze(1)) # Temporal evolution
+
+    # Do finite difference update on initial condition if that's the only input
+    if(ui.shape[2] == 1):
+        u_adv = _advection(uj, dt, dx, coeff[:,0])
+        u_diff = _diffusion(uj, dt, dx, coeff[:,1])
+        u_dis = _linear_advection(uj, dt, dx, coeff[:,2])
+        uj += u_adv + u_diff + u_dis
+        us = uj[...,-1].unsqueeze(0) - ui[...,-1].unsqueeze(1)
+        #print(ui.shape, uj.shape)
+        #print(us.shape)
+    else:
+        us = (ui[...,-1].unsqueeze(0) - uj[...,-2].unsqueeze(1)) # Temporal evolution
+        #print(ui.shape, uj.shape)
+        #print(us.shape)
+    #raise
 
     #xs = (xi[...,0].unsqueeze(0) - xj[...,0].unsqueeze(1)).norm(dim=-1)#[...,0]
     #print("DX: {}\tDT: {}".format(dx, dt))
@@ -96,6 +110,7 @@ def _anchored_l2(xi, xj, ui, uj, dt, dx, coeff):
         raise ValueError("\n\n\nNAN IN DISTANCE FUNCTION\n\n\n")
     #return ((us - physics_distance).norm(dim=-1))**2 + difference**2             # No mass
     return ((us - physics_distance).norm(dim=-1))**2                             # Just Physics
+
     #return difference**2                                          # Just pred
 
     #return (us - physics_distance)**2 + difference**2             # No mass
@@ -1061,25 +1076,16 @@ class GCL(torch.nn.Module):
         
         xi = target.clone()
         xj = target.clone()
-        #print(target)
-        #raise
 
         # Calculate matrix of dot products
         prod_mat = torch.sqrt(torch.sum((xi.unsqueeze(0) * xj.unsqueeze(1)).abs(), dim=-1))
         
         # Calculate matrix of maximum magnitudes
         norm_vec = torch.max(torch.cat((xi.norm(dim=-1).unsqueeze(-1), xj.norm(dim=-1).unsqueeze(-1)), dim=-1), dim=-1)[0]
-        norm_mat1 = torch.ones(xi.shape[0]).unsqueeze(0) * norm_vec.unsqueeze(1) 
-        norm_mat2 = norm_vec.unsqueeze(0) * torch.ones(xi.shape[0]).unsqueeze(1)
+        norm_mat1 = torch.ones(xi.shape[0]).unsqueeze(0).cuda() * norm_vec.unsqueeze(1) 
+        norm_mat2 = norm_vec.unsqueeze(0) * torch.ones(xi.shape[0]).unsqueeze(1).cuda()
         norm_mat = torch.cat((norm_mat1.unsqueeze(-1), norm_mat2.unsqueeze(-1)), dim=-1).max(dim=-1)[0]
 
-        #print()
-        #print(prod_mat)
-        #print(norm_mat)
-        #print(target)
-        #print(xi)
-        #print(prod_mat/norm_mat)
-        #print()
         return prod_mat / norm_mat
 
 
@@ -1153,7 +1159,181 @@ class GCL(torch.nn.Module):
             self.tau = similarity_matrix.mean().cuda()
         negative = 0.5 * (1 - sim_score) * torch.max(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0),
                                                            torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0))
+        #print(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0), torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0).shape)
+        #print(torch.max(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0), torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0)).shape)
+        max_obj = torch.amax(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0), torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0), dim=0)
+        negative = 0.5 * (1 - sim_score) * max_obj
+        #print(negative.shape)
+        #print(negative.max())
+        #raise
         return (positive + negative).mean()/batch_size
+
+
+class PassthroughGCL(torch.nn.Module):
+    def __init__(self, device, tau=10., use_cosine_similarity=True, **kwargs):
+        super(PassthroughGCL, self).__init__()
+        self.device = device
+        self.similarity_function = self._get_similarity_function(use_cosine_similarity)
+        self.tau = tau
+        self._tau = tau
+        print("\nTAU: {}".format(self.tau))
+        self.criterion = torch.nn.CrossEntropyLoss(reduction="mean")
+
+
+    def _get_similarity_function(self, use_cosine_similarity):
+        #print("\nUSING COSINE SIMILARITY\n")
+        #return torch.cdist
+        print("\nUSING ANCHORED L2 Passthrough SIMILARITY\n")
+        return None
+        #return self._dot_simililarity
+        if use_cosine_similarity:
+            self._cosine_similarity = torch.nn.CosineSimilarity(dim=-1)
+            return self._cosine_simililarity
+        else:
+            return self._dot_simililarity
+
+    def _diffusion(self, u, dt, dx, coeff):
+        '''
+            Calculated 2nd order central difference scheme for diffusion operator
+        '''
+        diff_u = (torch.roll(u, shifts=(0, 1), dims=(0,1)) + torch.roll(u, shifts=(0, -1), dims=(0,1)) - 2*u)
+        diff_u = coeff.unsqueeze(-1).unsqueeze(-1)*dt.unsqueeze(1).unsqueeze(1)*diff_u/dx.unsqueeze(1).unsqueeze(1)**2 
+        return diff_u
+        
+    
+    def _advection(self, u, dt, dx, coeff):
+        '''
+            Calculated 2nd order central difference scheme for nonlinear advection operator
+        '''
+        diff_u = (-torch.roll(u, shifts=(0, 1), dims=(0,1)) + torch.roll(u, shifts=(0, -1), dims=(0,1))) * u
+        diff_u = coeff.unsqueeze(-1).unsqueeze(-1)*dt.unsqueeze(1).unsqueeze(1)*diff_u/dx.unsqueeze(1).unsqueeze(1) 
+        return diff_u
+        
+        
+    def _dispersion(self, u, dt, dx, coeff):
+        '''
+            Calculated 2nd order central difference scheme for third derivative operator
+        '''
+        numerator =  torch.roll(u, shifts=(0,3), dims=(0,1)) - \
+                   8*torch.roll(u, shifts=(0,2), dims=(0,1)) + \
+                  13*torch.roll(u, shifts=(0,1), dims=(0,1)) - \
+                  13*torch.roll(u, shifts=(0,-1), dims=(0,1)) + \
+                   8*torch.roll(u, shifts=(0,-2), dims=(0,1)) - \
+                     torch.roll(u, shifts=(0,-2), dims=(0,1))
+        diff_u = coeff.unsqueeze(-1).unsqueeze(-1)*dt.unsqueeze(1).unsqueeze(1)*numerator/(2*dx.unsqueeze(1).unsqueeze(1)**3) 
+        return diff_u
+
+
+    def _pde_similarity(self, u, dt, dx, target):
+        
+        xi = target.clone()
+        xj = target.clone()
+
+        # Calculate matrix of dot products
+        prod_mat = torch.sqrt(torch.sum((xi.unsqueeze(0) * xj.unsqueeze(1)).abs(), dim=-1))
+        
+        # Calculate matrix of maximum magnitudes
+        norm_vec = torch.max(torch.cat((xi.norm(dim=-1).unsqueeze(-1), xj.norm(dim=-1).unsqueeze(-1)), dim=-1), dim=-1)[0]
+        norm_mat1 = torch.ones(xi.shape[0]).unsqueeze(0).cuda() * norm_vec.unsqueeze(1) 
+        norm_mat2 = norm_vec.unsqueeze(0) * torch.ones(xi.shape[0]).unsqueeze(1).cuda()
+        norm_mat = torch.cat((norm_mat1.unsqueeze(-1), norm_mat2.unsqueeze(-1)), dim=-1).max(dim=-1)[0]
+
+        return prod_mat / norm_mat
+
+
+    def _get_correlated_mask(self, batch_size):
+        diag = np.eye(2 * batch_size)
+        l1 = np.eye((2 * batch_size), 2 * batch_size, k=-batch_size)
+        l2 = np.eye((2 * batch_size), 2 * batch_size, k=batch_size)
+        mask = torch.from_numpy((diag + l1 + l2))
+        mask = (1 - mask).type(torch.bool)
+        return mask.to(self.device)
+
+
+    @staticmethod
+    def _dot_simililarity(x, y):
+        v = torch.tensordot(x.unsqueeze(1), y.T.unsqueeze(0), dims=2)
+        # x shape: (N, 1, C)
+        # y shape: (1, C, 2N)
+        # v shape: (N, 2N)
+        return v
+
+
+    def _cosine_simililarity(self, x, y):
+        # x shape: (N, 1, C)
+        # y shape: (1, 2N, C)
+        # v shape: (N, 2N)
+        v = self._cosine_similarity(x.unsqueeze(1), y.unsqueeze(0))
+        return v
+
+
+    def _similarity(self, vi, vj):
+        return torch.sqrt(vi.dot(vj).abs())/torch.max(vi.norm(), vj.norm())
+
+
+    def forward(self, x1, x2, vs, u, dt, dx):
+        assert x1.size(0) == x2.size(0)
+        batch_size = x1.size(0)
+
+        sim_score = np.zeros((batch_size, batch_size-1))
+
+        #sim_score = 1 - self._pde_similarity(u, dt, dx, vs)
+        sim_score = self._pde_similarity(u, dt, dx, vs).cuda()
+        sim_score = sim_score.repeat(2,2) # Supports x1 and x2 being different, but we don't use it.
+
+        #representations = x1#torch.cat([x2, x1], dim=0)
+        representations = torch.cat([x2, x1], dim=0)
+
+        ###
+        # TODO: Double check this is doing what I want
+        ###
+        #print(representations.shape)
+        #similarity_matrix = self.similarity_function(representations[...,0],
+        #                                             representations[...,0])
+        #similarity_matrix = self.similarity_function(representations.flatten(1,2),#[...,0],
+        #                                             representations.flatten(1,2))#[...,0])
+        if(len(x1.shape) == 4):
+            x1 = x1[...,0]
+        if(len(x2.shape) == 4):
+            x2 = x2[...,0]
+        #similarity_matrix = self.similarity_function(x1, x2,
+        #                                             u[...,0].clone(), u[...,0].clone(), dt, dx, vs)
+        u = torch.cat((u,u), dim=0)
+        dt = torch.cat((dt,dt), dim=0)
+        vs = torch.cat((vs,vs), dim=0)
+        #similarity_matrix = self.similarity_function(representations.flatten(1,2).cuda(), representations.flatten(1,2).cuda(),
+        #                                             u.clone().cuda(), u.clone().cuda(), dt.cuda(), dx.cuda(), vs.cuda()).cuda()
+        #print()
+        #print()
+        #print(x1.shape, x2.shape)
+        #print(representations.shape)
+        #similarity_matrix = x1.unsqueeze(0) * x2.unsqueeze(1)
+        similarity_matrix = representations.unsqueeze(0) * representations.unsqueeze(1)
+        print(similarity_matrix.shape)
+        similarity_matrix = similarity_matrix.sum(dim=2)[...,0,0]
+        #print()
+        print(similarity_matrix.shape)
+        print(sim_score.shape)
+        #print(representations.shape)
+        #print(similarity_matrix.requires_grad)
+        #print(sim_score.requires_grad)
+        #print()
+        #raise
+        #print(sim_score.shape)
+        #print(similarity_matrix.shape)
+        #print()
+        #print()
+        #raise
+        
+        positive = 0.5 * sim_score * similarity_matrix**2
+
+        if(self._tau == 'mean'):
+            self.tau = similarity_matrix.mean().cuda()
+        negative = 0.5 * (1 - sim_score) * torch.max(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0),
+                                                           torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0))
+        print(torch.max(torch.cat(((self.tau - similarity_matrix**2).unsqueeze(0), torch.zeros(sim_score.shape).unsqueeze(0).cuda()), axis=0)))
+        return (positive + negative).mean()/batch_size
+
 
 class GCL2D(torch.nn.Module):
     def __init__(self, device, tau=100., use_cosine_similarity=True, **kwargs):

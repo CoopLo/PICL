@@ -278,6 +278,8 @@ class TransformerOperatorDataset(Dataset):
         #self.sim_time = sim_time
         if(self.train_style == 'next_step' and sim_time == -1):
             self.sim_time = num_t//self.reduced_resolution_t - 1
+        elif(self.train_style == 'arbitrary_step' and sim_time == -1):
+            self.sim_time = num_t//self.reduced_resolution_t - 1
         else:
             self.sim_time = sim_time
 
@@ -300,7 +302,8 @@ class TransformerOperatorDataset(Dataset):
             if(self.train_style == 'next_step'):
                 idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
             elif(self.train_style == 'arbitrary_step'):
-                idxs = np.arange(0, len(seed_group[self.name][0]))[self.initial_step:]
+                idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
+                #idxs = np.arange(0, len(seed_group[self.name][0]))[self.initial_step:]
             
             elif(self.train_style == 'rollout'):
                 length = len(seed_group[self.name][0])
@@ -314,7 +317,8 @@ class TransformerOperatorDataset(Dataset):
                 #idxs += self.available_idxs[-1] + 1 if(self.train_style == 'next_step') else \
                 #        self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
                 #                                self.available_idxs[-1] + 100 - self.sim_time#self.available_idxs[-1] + 1
-                idxs += self.num_t//self.reduced_resolution_t - (self.sim_time-1) + self.available_idxs[-1] if(self.train_style == 'next_step') else \
+                idxs += self.num_t//self.reduced_resolution_t - (self.sim_time-1) + self.available_idxs[-1] \
+                        if(self.train_style in ['next_step', 'arbitrary_step']) else \
                         self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
                         self.available_idxs[-1] + len(seed_group[self.name][0]) - self.sim_time + 1
                 #idxs += self.available_idxs[-1] + 1 if(self.train_style == 'next_step') else \
@@ -329,7 +333,7 @@ class TransformerOperatorDataset(Dataset):
             if(self.return_text):
                 #self.tokens.append(list(torch.Tensor(seed_group[self.name].attrs['encoded_tokens'])))
                 self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
-                self.time.append(seed_group[self.name].attrs['t'])
+                self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
 
                 dl_split = self.data_list[i].split("_")
                 if(dl_split[0] == 'Burgers'):
@@ -366,8 +370,8 @@ class TransformerOperatorDataset(Dataset):
                 if(self.return_text):
                     # Encode time token
                     slice_tokens = self._encode_tokens("&" + str(self.time[idx][self.sim_time]))
-                    return_tokens = torch.Tensor(self.tokens[idx].clone())
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens)))
+                    return_tokens = torch.Tensor(self.tokens[idx].clone()).cuda()
+                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cuda()))
                     return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
                     self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
 
@@ -393,7 +397,7 @@ class TransformerOperatorDataset(Dataset):
 
                     # TODO: Maybe put this back
                     #return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cpu())).cpu()
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens)))
+                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens))).cuda()
 
                     return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
                     self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
@@ -463,7 +467,7 @@ class TransformerOperatorDataset(Dataset):
         idx samples the file.
         Need to figure out a way to sample the snapshots within the file...
         '''
-        if(self._pretrain):
+        if(self._pretrain and False):
             ###
             # Use this for pretraining
             ###
@@ -579,7 +583,8 @@ class TransformerOperatorDataset(Dataset):
                        self.data[idx][self.sim_time][...,np.newaxis], \
                        self.grid[idx], \
                        self.all_tokens[idx].to(device=device), \
-                       self.time[idx][self.sim_time]#, \
+                       self.time[idx][self.sim_time], \
+                       self.all_operator_maps[idx]
             else:
                 #print(self.data[idx][:self.initial_step].shape)
                 #print(self.data[idx][self.sim_time][...,np.newaxis].shape)
@@ -607,10 +612,11 @@ class TransformerOperatorDataset(Dataset):
 
             if(self.return_text):
                 return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                   self.data[sim_num][sim_time], \
+                   self.data[sim_num][sim_time][...,np.newaxis], \
                    self.grid[sim_num], \
                    self.all_tokens[sim_num].to(device=device), \
-                   self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1]
+                   self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
+                   self.all_operator_maps[sim_num]
             else:
                 #print(idx)
                 #print(sim_idx)
@@ -635,11 +641,23 @@ class TransformerOperatorDataset(Dataset):
                    self.grid[sim_num], \
                    self.all_tokens[sim_num].to(device=device), \
                    self.time[sim_num][sim_time], \
+                   self.all_operator_maps[sim_num]
+                #return self.data[sim_num][:self.initial_step], \
+                #   self.data[sim_num][sim_time][...,np.newaxis], \
+                #   self.grid[sim_num], \
+                #   self.all_tokens[sim_num].to(device=device), \
+                #   self.time[sim_num][sim_time], \
                 #return self.data[sim_num][sim_time-self.initial_step:sim_time], \
             else:
-                return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time][...,np.newaxis], \
-                       self.grid[sim_num][...,np.newaxis]
+                return self.data[sim_num][:self.initial_step], \
+                   self.data[sim_num][sim_time][...,np.newaxis], \
+                   self.grid[sim_num], \
+                   self.all_tokens[sim_num].to(device=device), \
+                   self.time[sim_num][sim_time], \
+                   self.all_operator_maps[sim_num]
+                #return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
+                #       self.data[sim_num][sim_time][...,np.newaxis], \
+                #       self.grid[sim_num][...,np.newaxis]
 
         # Need to slice according ot available data and rollout
         elif(self.train_style == 'rollout'):
@@ -777,6 +795,8 @@ class TransformerMultiOperatorDataset(Dataset):
 
         if(self.train_style == 'next_step' and sim_time == -1):
             self.sim_time = num_t//self.reduced_resolution_t - 1
+        elif(self.train_style == 'arbitrary_step' and sim_time == -1):
+            self.sim_time = num_t//self.reduced_resolution_t - 1
         else:
             self.sim_time = sim_time
 
@@ -884,7 +904,7 @@ class TransformerMultiOperatorDataset(Dataset):
                     idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
                 elif(self.train_style == 'arbitrary_step'):
                     #idxs = np.arange(0, len(seed_group[self.name][0]))[self.initial_step:]
-                    idxs = np.arange(0, len(seed_group[self.name][0]))#[::self.reduced_resolution_t][self.initial_step:self.sim_time]
+                    idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
 
                 #else:#(self.train_style == 'rollout'):
                 #    length = len(seed_group[self.name][0])
@@ -894,9 +914,11 @@ class TransformerMultiOperatorDataset(Dataset):
                     idxs = np.arange(0, length)[self.initial_step:length-self.rollout_length]
                 elif(self.train_style == 'fixed_future'):
                     idxs = np.array([i])
+                else:
+                    raise
 
                 if(len(self.available_idxs) != 0):
-                    idxs += self.num_t//self.reduced_resolution_t - (self.sim_time-1) + self.available_idxs[-1] if(self.train_style == 'next_step') else \
+                    idxs += self.num_t//self.reduced_resolution_t - (self.sim_time-1) + self.available_idxs[-1] if(self.train_style in ['next_step', 'arbitrary_step']) else \
                             self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
                     self.available_idxs[-1] + len(seed_group[self.name][0]) - self.sim_time + 1
                 self.available_idxs.extend(idxs)
@@ -906,21 +928,16 @@ class TransformerMultiOperatorDataset(Dataset):
                     self.grid.append(np.array(seed_group[self.name].attrs["x"], dtype='f')[::2][::self.reduced_resolution])
                 else:
                     self.grid.append(np.array(seed_group[self.name].attrs["x"], dtype='f')[::self.reduced_resolution])
+
+                # Get operator coefficients
                 if(self.return_text):
-                    #raise
-                    #self.tokens.append(list(torch.Tensor(seed_group[self.name].attrs['encoded_tokens'])))
                     self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
-                    #print(''.join([self.id2word[int(t)] for t in self.tokens[-1][:54]]))
                     self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
-                    #print(self.data_list[i])
                     dl_split = self.data_list[i].split("_")
                     if(dl_split[0] == 'Burgers'):
                         omap = [float(dl_split[2]), float(dl_split[3]), 0]
-                        #print(dl_split)
                     elif(dl_split[0] == 'Heat'):
                         omap = [0, float(dl_split[2]), 0]
-                        #omap = [0, float(dl_split[3]), 0]
-                        #print(dl_split)
                     elif(dl_split[0] == 'KdV'):
                         omap = [float(dl_split[2]), 0, float(dl_split[3])]
                     elif(dl_split[0] == 'Advection'):
@@ -928,9 +945,6 @@ class TransformerMultiOperatorDataset(Dataset):
                     else:
                         raise ValueError("Invalid 1D data set used. Only Heat, Burgers, and KdV are currently supported.")
                     self.all_operator_maps.append(omap)
-                    #print(omap)
-                    #print(self.data_list)
-                    #raise
 
             f.close()
             #raise
@@ -969,7 +983,12 @@ class TransformerMultiOperatorDataset(Dataset):
             # Create array of all legal encodings, pdes, and data
             self.all_tokens = torch.empty(len(self.available_idxs), 500)#.to(device=device)#.cuda()
 
+            #print()
+            #print()
             #print(self.available_idxs)
+            #print()
+            #print()
+            #raise
             #print(len(self.time))
             #print(self.time[0].shape)
             #print(self.data.shape)
@@ -979,12 +998,19 @@ class TransformerMultiOperatorDataset(Dataset):
                 sim_num = sim_idx // self.data.shape[1] # Get simulation number
                 sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
                 if(self.return_text):
-                    slice_tokens = self._encode_tokens("&" + str(self.time[sim_num][sim_time]))
+                    try:
+                        slice_tokens = self._encode_tokens("&" + str(self.time[sim_num][sim_time]))
+                    except IndexError:
+                        print()
+                        print()
+                        print(self.data.shape, len(self.time), len(self.time[0]), sim_num, sim_time)
+                        print()
+                        print()
+                        raise
                     return_tokens = torch.Tensor(self.tokens[sim_num].clone())
 
                     # TODO: Maybe put this back
-                    #return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cpu())).cpu()
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens)))
+                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens))).cuda()
 
                     return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
                     self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
@@ -1057,23 +1083,7 @@ class TransformerMultiOperatorDataset(Dataset):
         #print("\nHERE\n")
         # Everything is precomputed
         if(self.train_style == 'fixed_future'):
-            #print(idx)
-            #print(self.sim_time)
-            #print(self.data.shape)
-            #print(self.grid.shape)
-            #print(self.all_tokens.shape)
-            #print(self.time.shape)
-            #print(self.time[0][1] - self.time[0][0])
-            #raise
-            #print(self.all_operator_maps.shape)
-            #sim_num = sim_idx // self.data.shape[1] # Get simulation number
             if(self.return_text):
-                #print(self.all_tokens.shape)
-                #print(idx)
-                #raise
-                #sim_num = sim_idx // self.data.shape[1] # Get simulation number
-                #sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-                #TODO Need to fix tokens
                 if(self._pretrain_tokens):
                     return self.data[idx][:self.initial_step], \
                        self.data[idx][self.sim_time][...,np.newaxis], \
@@ -1081,8 +1091,6 @@ class TransformerMultiOperatorDataset(Dataset):
                        self.all_tokens[idx].to(device=device), \
                        self.time[idx][self.sim_time], \
                        self.all_operator_maps[idx]
-                       #self.time[idx][self.sim_time] - self.time[idx][self.sim_time-1], \
-                       #self.time[idx][:self.initial_step], \
                 else:
                     return self.data[idx][:self.initial_step], \
                        self.data[idx][self.sim_time][...,np.newaxis], \
@@ -1111,14 +1119,17 @@ class TransformerMultiOperatorDataset(Dataset):
                        self.data[sim_num][sim_time][...,np.newaxis], \
                        self.grid[sim_num], \
                        self.all_tokens[sim_num].to(device=device), \
-                       self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
+                       self.time[sim_num][sim_time], \
                        self.all_operator_maps[sim_num]
+                       #self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
                 else:
                     return self.data[sim_num][sim_time-self.initial_step:sim_time], \
                        self.data[sim_num][sim_time][...,np.newaxis], \
                        self.grid[sim_num], \
                        self.all_tokens[sim_num].to(device=device), \
-                       self.time[sim_num][self.sim_time] - self.time[sim_num][sim_time-1]
+                       self.time[sim_num][sim_time], \
+                       self.all_operator_maps[sim_num]
+                       #self.time[sim_num][self.sim_time] - self.time[sim_num][sim_time-1]
             else:
                 if(sim_time == 0):
                     raise ValueError("WHOOPSIE")
@@ -1145,6 +1156,7 @@ class TransformerMultiOperatorDataset(Dataset):
                    self.grid[sim_num], \
                    self.all_tokens[sim_num].to(device=device), \
                    self.time[sim_num][sim_time], \
+                   self.all_operator_maps[sim_num]
                 #return self.data[sim_num][sim_time-self.initial_step:sim_time], \
                 #return self.data[sim_num][0], \
                 #   self.data[sim_num][sim_time][...,np.newaxis], \
@@ -1327,7 +1339,7 @@ class TransformerOperatorDataset2D(Dataset):
                 self.o_map.append(torch.Tensor([float(sdl[1])/DIFF_MAX, float(sdl[2])/ADV_MAX, float(sdl[3])/ADV_MAX]))
             elif('Heat' in self.data_list[i]):
                 self.o_map.append(torch.Tensor([float(sdl[1])/DIFF_MAX, 0., 0.]))
-            data = seed_group['u'][:][:,::reduced_resolution,::reduced_resolution,...]
+            data = seed_group['u'][:][::reduced_resolution_t,::reduced_resolution,::reduced_resolution,...]
 
             print(self.o_map[-1])
             #print(data.shape)
@@ -1335,9 +1347,9 @@ class TransformerOperatorDataset2D(Dataset):
 
             # Get extra info
             base_tokens = seed_group['tokens'][:]
-            x = seed_group['X'][:][::reduced_resolution,::reduced_resolution,np.newaxis]
-            y = seed_group['Y'][:][::reduced_resolution,::reduced_resolution,np.newaxis]
-            w0 = seed_group['a'][:][...,::reduced_resolution,::reduced_resolution,np.newaxis]
+            x = seed_group['X'][:][::reduced_resolution_t,::reduced_resolution,::reduced_resolution,np.newaxis]
+            y = seed_group['Y'][:][::reduced_resolution_t,::reduced_resolution,::reduced_resolution,np.newaxis]
+            w0 = seed_group['a'][:][...,::reduced_resolution_t,::reduced_resolution,::reduced_resolution,np.newaxis]
 
             # Add initial condition
             complete_data = np.concatenate((w0, data), axis=3)

@@ -2,8 +2,14 @@ args:
     device: 'cuda:0'
     train_style: 'fixed_future' # 'fixed_future', 'rollout'
     #train_style: 'next_step' # 'fixed_future', 'rollout'
+    #train_style: 'arbitrary_step' # 'fixed_future', 'rollout'
     
-    results_dir: './PICL_FF_RESULTS/'
+    #results_dir: './initial_step_PICL_AS_RESULTS/'
+    #results_dir: './fixed_initial_step_PICL_AS_RESULTS/'
+    #results_dir: './loading_test/'
+    #results_dir: './rollout_results/'
+    #results_dir: './tune_initial_step_PICL_AS_RESULTS/'
+    results_dir: './passthrough_initial_step_PICL_AS_RESULTS/'
 
     return_text: True
     #return_text: False
@@ -11,16 +17,17 @@ args:
     #tau: 10
     #tau: 50
     #tau: 100
-    load: False
+    #load_pretrained: True
+    load_pretrained: False
 
     #forcing_term: 'full'
     #forcing_term: 'non_td'
-    #forcing_term: 'none'
-    forcing_term: 'all'
+    forcing_term: 'none'
+    #forcing_term: 'all'
 
     num_workers: 0
 
-    initial_step: 10
+    initial_step: 1
     #initial_step: 2
     rollout_length: 5
     t_train: 200
@@ -46,55 +53,62 @@ args:
     reduced_batch: 1
 
     contrastive_loss: 'normalGCL'
+    #contrastive_loss: 'passthroughGCL'
     similarity: 'anchored_l2'
 
     # Optimizer
     batch_size: 32
     learning_rate: 1.e-3
-    weight_decay: 1.e-8
+    weight_decay: 1.e-6
     scheduler_step: 100
     scheduler_gamma: 0.5
-    epochs: 5
+    epochs: 1
+    #epochs: 100
     #epochs: 500
 
     pretrain_done: False
-    pretrain_batch_size: 512
+    pretraining_batch_size: 512
+    #pretraining_batch_size: 1024
     pretrain_learning_rate: 1.e-2
     pretrain_weight_decay: 1.e-6
     pretrain_scheduler_step: 50
     pretrain_scheduler_gamma: 0.25
-    pretrain_epochs: 10
+    #pretrain_epochs: 1
+    #pretrain_epochs: 20
+    pretrain_epochs: 100
     #pretrain_epochs: 500
     num_seeds: 5
 
     # Sim samples
     num_t: 200
     num_x: 200
-    #sim_time: 99
+    #sim_time: 20 
     #sim_time: 15
     sim_time: -1 # Not supported for next-step training
 
     #num_samples: 10
-    #num_samples: 50
-    num_samples: 100
+    num_samples: 50
+    #num_samples: 100
     #num_samples: 500
     #num_samples: 1000
     #num_samples: 2000
     #num_samples: 3000
     #num_samples: 5000
     #num_samples: 8000
+    #pretraining_num_samples: 100
+    pretraining_num_samples: 5000
 
     # FNO
     num_channels: 1
     modes: 8
     #width: 512
-    width: 256
+    #width: 256
     #width: 128
-    #width: 128
+    width: 32
     #width: 100
     dropout: 0.01 # Default
     finetune_dropout: 0.01 # Default
 
     # Tracking
     log_freq: 10
-    progress_plot_freq: 100
+    progress_plot_freq: 250

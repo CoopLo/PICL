@@ -177,9 +177,18 @@ class FNO1d(nn.Module):
         self._pretrain = False
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, grid):
+    def forward(self, x, grid, t=None, coeffs=None):
+        #print()
+        #print()
+        #print(x.shape, grid.shape, t.shape, coeffs.shape)
         # x dim = [b, x1, t*v]
         x0 = x.clone()
+        if(t is not None):
+            x = torch.cat((x, t.unsqueeze(1).unsqueeze(1).broadcast_to(grid.shape)), dim=-1)
+        if(coeffs is not None):
+            x = torch.cat((x, coeffs.unsqueeze(1).broadcast_to(grid.shape[0], grid.shape[1], 3)), dim=-1)
+
+        # Always stack grid
         x = torch.cat((x, grid), dim=-1)
         x = self.fc0(x)
         x = x.permute(0, 2, 1)
