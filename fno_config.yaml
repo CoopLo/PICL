@@ -1,24 +1,30 @@
 args:
     device: 'cuda:0'
-    train_style: 'fixed_future' # 'fixed_future', 'rollout'
-    #train_style: 'next_step' # 'fixed_future', 'rollout'
+    #train_style: 'fixed_future' # 'fixed_future', 'rollout'
+    train_style: 'next_step' # 'fixed_future', 'rollout'
     #train_style: 'arbitrary_step' # 'fixed_future', 'rollout'
     
     #results_dir: './initial_step_PICL_AS_RESULTS/'
     #results_dir: './fixed_initial_step_PICL_AS_RESULTS/'
     #results_dir: './loading_test/'
+    #results_dir: './cyclic_first_test/'
+    #results_dir: './new_data_cyclic_first_test/'
+    #results_dir: './test_sweep/'
+    #results_dir: './l1_new_data_results/'
+    #results_dir: './l2_new_data_results/'
+    results_dir: './next_compare_new_data_results/'
     #results_dir: './rollout_results/'
     #results_dir: './tune_initial_step_PICL_AS_RESULTS/'
-    results_dir: './passthrough_initial_step_PICL_AS_RESULTS/'
+    #results_dir: './passthrough_initial_step_PICL_AS_RESULTS/'
 
-    return_text: True
-    #return_text: False
-    tau: 'mean'
-    #tau: 10
-    #tau: 50
+    #tau: 'mean'
+    #tau: 1   # I think it was this one...
+    tau: 5
     #tau: 100
-    #load_pretrained: True
-    load_pretrained: False
+    load_pretrained: True
+    #load_pretrained: False
+    #pretrained_path: './PRETRAINED_MODELS/'
+    pretrained_path: './NEW_PRETRAINED_MODELS/'
 
     #forcing_term: 'full'
     #forcing_term: 'non_td'
@@ -33,21 +39,14 @@ args:
     t_train: 200
     validate: 1
     #flnm: 'Heat'
-    #data_name: 'heat_1000.h5'
-    #data_name: 'xwide_non_td_heat_2000.h5'
-    #data_name: 'new_long_xwide_no_forcing_heat_2000.h5'
+    #data_name: 'finetune_new_long_xwide_no_forcing_heat_2000.h5'
     #flnm: 'Burgers'
-    #data_name: 'burgers_250.h5'
-    #data_name: 'xwide_non_td_burgers_250.h5'
-    #data_name: 'new_long_xwide_no_forcing_burgers_250.h5'
-    #flnm: 'KdV'
-    #data_name: 'new_kdv_250.h5'
-    #data_name: 'xwide_non_td_kdv_250.h5'
-    #data_name: 'new_long_xwide_no_forcing_kdv_500.h5'
+    #data_name: 'finetune_new_long_xwide_no_forcing_burgers_250.h5'
     #flnm: 'Advection'
-    data_name: 'new_long_xwide_no_forcing_advection_2000.h5'
+    data_name: 'finetune_new_long_xwide_no_forcing_advection_2000.h5'
     flnm: 'all'
-    base_path: '/home/cooper/'
+
+    base_path: '/media/mlai/DATA/PRETRAINING_NUERAL_OPERATOR_RESULTS/PretrainingNeuralOperators/data_generation/pde_data/'
     reduced_resolution: 4
     reduced_resolution_t: 4
     reduced_batch: 1
@@ -58,23 +57,23 @@ args:
 
     # Optimizer
     batch_size: 32
-    learning_rate: 1.e-3
-    weight_decay: 1.e-6
+    learning_rate: 1.e-2
+    weight_decay: 1.e-5
     scheduler_step: 100
     scheduler_gamma: 0.5
-    epochs: 1
-    #epochs: 100
+    #epochs: 5
+    epochs: 100
     #epochs: 500
 
     pretrain_done: False
+    #pretraining_batch_size: 256
     pretraining_batch_size: 512
     #pretraining_batch_size: 1024
     pretrain_learning_rate: 1.e-2
-    pretrain_weight_decay: 1.e-6
-    pretrain_scheduler_step: 50
-    pretrain_scheduler_gamma: 0.25
-    #pretrain_epochs: 1
-    #pretrain_epochs: 20
+    pretrain_weight_decay: 1.e-5
+    pretrain_scheduler_step: 5
+    #pretrain_scheduler_step: 100
+    pretrain_scheduler_gamma: 0.5
     pretrain_epochs: 100
     #pretrain_epochs: 500
     num_seeds: 5
@@ -82,21 +81,26 @@ args:
     # Sim samples
     num_t: 200
     num_x: 200
-    #sim_time: 20 
+    sim_time: 20 
     #sim_time: 15
-    sim_time: -1 # Not supported for next-step training
+    #sim_time: -1 # Not supported for next-step training
 
     #num_samples: 10
-    num_samples: 50
-    #num_samples: 100
+    #num_samples: 50
+    num_samples: 100
     #num_samples: 500
     #num_samples: 1000
-    #num_samples: 2000
+    ##num_samples: 2000
     #num_samples: 3000
     #num_samples: 5000
     #num_samples: 8000
-    #pretraining_num_samples: 100
-    pretraining_num_samples: 5000
+    #pretraining_num_samples: 0
+    pretraining_num_samples: 100
+    #pretraining_num_samples: 500
+    #pretraining_num_samples: 1000
+    #pretraining_num_samples: 2000
+    #pretraining_num_samples: 5000
+    #pretraining_num_samples: 8000
 
     # FNO
     num_channels: 1
@@ -106,9 +110,13 @@ args:
     #width: 128
     width: 32
     #width: 100
-    dropout: 0.01 # Default
-    finetune_dropout: 0.01 # Default
+    dropout: 0.00 # Default
+    finetune_dropout: 0.00 # Default
 
     # Tracking
-    log_freq: 10
+    log_freq: 20
     progress_plot_freq: 250
+
+
+    #TODO: Different results when pretrained vs. loaded from pretrained...
+    #TODO: Single sample from each equation coefficient pair

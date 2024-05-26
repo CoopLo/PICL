@@ -22,12 +22,14 @@ sys.path.append('.')
 from models.fno import FNO1d
 #from models.deeponet import DeepONet1D
 from utils import TransformerOperatorDataset, TransformerMultiOperatorDataset
+from utils import LpLoss
 
 import yaml
 from tqdm import tqdm
 import h5py
 from matplotlib import pyplot as plt
 
+DEBUG = True
 
 def progress_plots(ep, y_train_true, y_train_pred, y_val_true, y_val_pred, path="progress_plots", seed=None):
     ncols = 4
@@ -91,10 +93,10 @@ def train_plots(train_loader, seed=None):
 
 def get_model(model_name, config):
     if(model_name == "fno"):
-        model = FNO1d(config['num_channels'], config['modes'], config['width'], config['initial_step']+4, config['dropout'])
+        model = FNO1d(config['num_channels'], config['modes'], config['width'], config['initial_step']+4, config['finetune_dropout'])
     elif(model_name == "oformer"):
         encoder = Encoder1D(input_channels=config['input_channels'], in_emb_dim=config['in_emb_dim'],
-                            out_seq_emb_dim=config['out_seq_emb_dim'], depth=config['depth'], dropout=config['dropout'],
+                            out_seq_emb_dim=config['out_seq_emb_dim'], depth=config['depth'], dropout=config['finetune_dropout'],
                             res=config['enc_res'])
         decoder = STDecoder1D(latent_channels=config['latent_channels'], out_channels=config['out_channels'],
                                      decoding_depth=config['decoding_depth'], scale=config['scale'], res=config['dec_res'])
@@ -116,7 +118,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -125,6 +126,8 @@ def get_data(f, config):
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
                                 forcing_term=config['forcing_term'],
+                                finetune=True,
+                                debug=DEBUG,
         )
         train_data.data = train_data.data.to(device)
         train_data.grid = train_data.grid.to(device)
@@ -135,7 +138,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -144,6 +146,8 @@ def get_data(f, config):
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
                                 forcing_term=config['forcing_term'],
+                                finetune=True,
+                                debug=DEBUG,
         )
         val_data.data = val_data.data.to(device)
         val_data.grid = val_data.grid.to(device)
@@ -154,7 +158,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -163,11 +166,12 @@ def get_data(f, config):
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
                                 forcing_term=config['forcing_term'],
+                                finetune=True,
+                                debug=DEBUG,
         )
         test_data.data = test_data.data.to(device)
         test_data.grid = test_data.grid.to(device)
     else:
-        print("\nSO WE'RE HERE??\n")
         train_data = TransformerOperatorDataset(f, config['flnm'],
                                 split="train",
                                 initial_step=config['initial_step'],
@@ -175,7 +179,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -183,9 +186,21 @@ def get_data(f, config):
                                 train_style=config['train_style'],
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
+                                debug=DEBUG,
         )
         train_data.data = train_data.data.to(device)
         train_data.grid = train_data.grid.to(device)
+
+        val_name = config['data_name'].replace('finetune', 'validate')
+
+        # Get new name based on split
+        if('heat' in config['data_name']):
+            val_name = "validate_new_long_xwide_no_forcing_heat_100.h5"
+        elif('burgers' in config['data_name']):
+            val_name = "validate_new_long_xwide_no_forcing_burgers_25.h5"
+        elif('advection' in config['data_name']):
+            val_name = "validate_new_long_xwide_no_forcing_advection_125.h5"
+        f = h5py.File("{}{}".format(config['base_path'], val_name), 'r')
         val_data = TransformerOperatorDataset(f, config['flnm'],
                                 split="val",
                                 initial_step=config['initial_step'],
@@ -193,7 +208,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -201,9 +215,19 @@ def get_data(f, config):
                                 train_style=config['train_style'],
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
+                                debug=DEBUG,
         )
         val_data.data = val_data.data.to(device)
         val_data.grid = val_data.grid.to(device)
+
+        # Get new name based on split
+        if('heat' in config['data_name']):
+            test_name = "test_new_long_xwide_no_forcing_heat_200.h5"
+        elif('burgers' in config['data_name']):
+            test_name = "test_new_long_xwide_no_forcing_burgers_50.h5"
+        elif('advection' in config['data_name']):
+            test_name = "test_new_long_xwide_no_forcing_advection_250.h5"
+        f = h5py.File("{}{}".format(config['base_path'], test_name), 'r')
         test_data = TransformerOperatorDataset(f, config['flnm'],
                                 split="test",
                                 initial_step=config['initial_step'],
@@ -211,7 +235,6 @@ def get_data(f, config):
                                 reduced_resolution_t=config['reduced_resolution_t'],
                                 reduced_batch=config['reduced_batch'],
                                 saved_folder=config['base_path'],
-                                return_text=True,
                                 num_t=config['num_t'],
                                 num_x=config['num_x'],
                                 sim_time=config['sim_time'],
@@ -219,6 +242,7 @@ def get_data(f, config):
                                 train_style=config['train_style'],
                                 rollout_length=config['rollout_length'],
                                 seed=config['seed'],
+                                debug=DEBUG,
         )
         test_data.data = test_data.data.to(device)
         test_data.grid = test_data.grid.to(device)
@@ -233,14 +257,36 @@ def get_data(f, config):
                                              num_workers=config['num_workers'], shuffle=False)#,
                                              #generator=torch.Generator(device='cuda'))
 
-    assert not (bool(set(train_data.data_list) & \
-                     set(val_data.data_list)) | \
-                bool(set(train_data.data_list) & \
-                     set(test_data.data_list)) & \
-                bool(set(val_data.data_list) & \
-                     set(test_data.data_list)))
+    #assert not (bool(set(train_data.data_list) & \
+    #                 set(val_data.data_list)) | \
+    #            bool(set(train_data.data_list) & \
+    #                 set(test_data.data_list)) & \
+    #            bool(set(val_data.data_list) & \
+    #                 set(test_data.data_list)))
+    #TODO Check data at least once...
 
     return train_loader, val_loader, test_loader
+
+
+def get_loss(model, xx, y, grid, t, target, loss_fn):
+    if(isinstance(model, FNO1d)):
+        x = torch.swapaxes(xx, 1, 2)
+        grid = torch.swapaxes(grid.unsqueeze(1), 1, 2)
+        t = t.cuda()
+        target = target.cuda()
+
+        # Standard forward pass
+        x = torch.swapaxes(xx, 1, 2).cuda()
+        im = model(x, grid, t=t, coeffs=target)[...,0]
+        loss = loss_fn(im, y)
+    elif(isinstance(model,DeepONet1D)):
+        x = torch.swapaxes(xx, 1, 2)
+        grid = torch.swapaxes(grid.unsqueeze(-1), 1, 2)
+        im = model(x, grid)[...,0]
+        loss = loss_fn(yy, im)
+
+    return im, loss
+
 
 
 def evaluate(test_loader, model, loss_fn):
@@ -249,36 +295,32 @@ def evaluate(test_loader, model, loss_fn):
     with torch.no_grad():
         model.eval()
         #for bn, (xx, yy, grid) in enumerate(test_loader):
-        for bn, (xx, y, grid, tokens, t, target) in enumerate(test_loader):
+        for bn, (xx, y, grid, t, target) in enumerate(test_loader):
             
-            #if(isinstance(model, (FNO1d, OFormer1D))):
-            if(isinstance(model, FNO1d)):
-                #x = torch.swapaxes(xx, 1, 2)
-                ##grid = torch.swapaxes(grid, 1, 2)
-                #grid = grid.unsqueeze(-1)#torch.swapaxes(grid, 1, 2)
-                ##im, loss = model.get_loss(x, yy[:,0,:], grid, loss_fn)
-                #if(len(yy.shape) == 3):
-                #    yy = yy[...,0]
-                #im, loss = model.get_loss(x, yy, grid, loss_fn)
-                x = torch.swapaxes(xx, 1, 2)
-                grid = torch.swapaxes(grid.unsqueeze(1), 1, 2)
-                t = t.cuda()
-                target = target.cuda()
-            
-                # Standard forward pass
-                x = torch.swapaxes(xx, 1, 2).cuda()
-                im = model(x, grid, t=t, coeffs=target)[...,0]
-                loss = loss_fn(im, y)
-            elif(isinstance(model,DeepONet1D)):
-                x = torch.swapaxes(xx, 1, 2)
-                grid = torch.swapaxes(grid.unsqueeze(-1), 1, 2)
-                im = model(x, grid)[...,0]
-                if(len(yy.shape) == 3):
-                    yy = yy[...,0]
-                loss = loss_fn(yy, im)
+            im, loss = get_loss(model, xx, y, grid, t, target, loss_fn)
+            if(loss == torch.inf):
+                print(im.shape)
+                print(y.shape)
+                for i in range(im.shape[0]):
+                    if(loss_fn(im[i], y[i]) == torch.inf):
+                        fig, ax = plt.subplots()
+                        ax.plot(y[i].cpu(), label="Ground Truth")
+                        ax.plot(im[i].cpu(), label="Prediction")
+                        ax.legend(loc='best')
+
+                        for idx, d in enumerate(test_loader.dataset.data_list):
+                            #print(test_loader.dataset.data[idx].shape)
+                            if((test_loader.dataset.data[idx] == torch.zeros((50,50)).cuda()).all()):
+                                print(test_loader.dataset.data_list[idx])
+                        raise
+                        plt.show()
+
+                    #print(y[i])
+                raise
 
             test_l2_step += loss.item()
             test_l2_full += loss.item()
+    #raise
     return test_l2_full/(bn+1)
                 
 
@@ -417,6 +459,8 @@ def run_training(model, config, prefix):
     #                                                    steps_per_epoch=len(train_loader), epochs=config['epochs'])
     #else:
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config['scheduler_step'], gamma=config['scheduler_gamma'])
+    #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],# div_factor=1e6,
+    #                                                steps_per_epoch=len(train_loader), epochs=config['epochs'])
     
     loss_fn = nn.L1Loss(reduction="mean")
     #loss_fn = nn.MSELoss(reduction="mean")
@@ -432,41 +476,9 @@ def run_training(model, config, prefix):
         train_l2_step = 0
         train_l2_full = 0
         #for bn, (xx, yy, grid) in enumerate(train_loader):
-        for bn, (xx, y, grid, tokens, t, target) in enumerate(train_loader):
+        for bn, (xx, y, grid, t, target) in enumerate(train_loader):
             
-            # Each model handles input differnetly
-            #if(isinstance(model, (FNO1d, OFormer1D))):
-            if(isinstance(model, FNO1d)):
-                #x = torch.swapaxes(xx, 1, 2)
-                #grid = grid.unsqueeze(-1)#torch.swapaxes(grid, 1, 2)
-                ##im, loss = model.get_loss(x, yy[:,0,:], grid, loss_fn)
-                #if(len(yy.shape) == 3):
-                #    yy = yy[...,0]
-                #im, loss = model.get_loss(x, yy, grid, loss_fn)
-                x = torch.swapaxes(xx, 1, 2)
-                grid = torch.swapaxes(grid.unsqueeze(1), 1, 2)
-                t = t.cuda()
-                target = target.cuda()
-            
-                # Standard forward pass
-                x = torch.swapaxes(xx, 1, 2).cuda()
-                im = model(x, grid, t=t, coeffs=target)[...,0]
-                loss = loss_fn(im, y)
-
-            elif(isinstance(model,DeepONet1D)):
-                x = torch.swapaxes(xx, 1, 2)
-                grid = torch.swapaxes(grid.unsqueeze(-1), 1, 2)
-                im = model(x, grid)[...,0]
-                #im, loss = model.get_loss(x, yy, grid, loss_fn)
-                if(len(yy.shape) == 3):
-                    yy = yy[...,0]
-                #print()
-                #print()
-                #print(yy.shape, im.shape)
-                #print()
-                #print()
-                #raise
-                loss = loss_fn(yy, im)
+            im, loss = get_loss(model, xx, y, grid, t, target, loss_fn)
 
             # Guarantees we're able to plot at least a few from first batch
             if(bn == 0):
@@ -480,49 +492,23 @@ def run_training(model, config, prefix):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if(isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR)):
+                scheduler.step()
+
 
         train_l2s.append(train_l2_full/(bn+1))
-        bn1 = bn
 
         if ep % config['validate'] == 0:
             val_l2_step = 0
             val_l2_full = 0
             with torch.no_grad():
                 model.eval()
-                #for bn, (xx, yy, grid) in enumerate(val_loader):
-                for bn, (xx, y, grid, tokens, t, target) in enumerate(val_loader):
+                for bn, (xx, y, grid, t, target) in enumerate(val_loader):
 
-                    # Each model handles input differnetly
-                    #if(isinstance(model, (FNO1d, OFormer1D))):
-                    if(isinstance(model, FNO1d)):
-                        #x = torch.swapaxes(xx, 1, 2)
-                        ##grid = torch.swapaxes(grid, 1, 2)
-                        #grid = grid.unsqueeze(-1)#torch.swapaxes(grid, 1, 2)
-                        ##im, loss = model.get_loss(x, yy[:,0,:], grid, loss_fn)
-                        #if(len(yy.shape) == 3):
-                        #    yy = yy[...,0]
-                        #im, loss = model.get_loss(x, yy, grid, loss_fn)
-                        x = torch.swapaxes(xx, 1, 2)
-                        grid = torch.swapaxes(grid.unsqueeze(1), 1, 2)
-                        t = t.cuda()
-                        target = target.cuda()
-            
-                        # Standard forward pass
-                        x = torch.swapaxes(xx, 1, 2).cuda()
-                        im = model(x, grid, t=t, coeffs=target)[...,0]
-                        loss = loss_fn(im, y)
-
-                    elif(isinstance(model,DeepONet1D)):
-                        x = torch.swapaxes(xx, 1, 2)
-                        grid = torch.swapaxes(grid.unsqueeze(-1), 1, 2)
-                        im = model(x, grid)[...,0]
-                        if(len(yy.shape) == 3):
-                            yy = yy[...,0]
-                        loss = loss_fn(yy, im)
+                    im, loss = get_loss(model, xx, y, grid, t, target, loss_fn)
 
                     # Guarantees we're able to plot at least a few from first batch
                     if(bn == 0):
-                        #y_val_true = yy[:,0,:].clone()
                         y_val_true = y.clone()
                         y_val_pred = im.clone()
 
@@ -548,7 +534,8 @@ def run_training(model, config, prefix):
         val_l2s.append(val_l2_full/(bn+1))
                 
         t2 = default_timer()
-        scheduler.step()
+        if(isinstance(scheduler, torch.optim.lr_scheduler.StepLR)):
+            scheduler.step()
         if(ep%config['log_freq'] == 0):
             print('epoch: {0}, loss: {1:.5f}, time: {2:.5f}s, trainL2: {3:.5f}, testL2: {4:.5f}'\
                 .format(ep, loss.item(), t2 - t1, train_l2s[-1], val_l2s[-1]))
@@ -566,6 +553,8 @@ def run_training(model, config, prefix):
     np.save("./{}/val_l2s_{}.npy".format(path, seed), val_l2s)
     progress_plots(ep, y_train_true, y_train_pred, y_val_true, y_val_pred, path, seed=seed)
 
+    # Evaluate using LpLoss
+    loss_fn = LpLoss(d=1)
     test_vals = []
     #model.eval()
     test_value = evaluate(test_loader, model, loss_fn)
@@ -598,54 +587,65 @@ if __name__ == "__main__":
         config = yaml.safe_load(stream)
     train_args = config['args']
     train_style = train_args['train_style']
-    for vs in [
-           ['Heat', 'finetune_new_long_xwide_no_forcing_heat_2000.h5'],
-           ['Burgers', 'finetune_new_long_xwide_no_forcing_burgers_250.h5'],
-           #['Advection', 'finetune_new_long_xwide_no_forcing_advection_2000.h5'],
-           #['all', 'new_long_xwide_no_forcing_advection_2000.h5']
-               ]:
-        # Load config
-        with open("./{}_config.yaml".format(model_name), 'r') as stream:
-            config = yaml.safe_load(stream)
-        train_args = config['args']
-        train_args['train_style'] = train_style
+    NUM_SAMPLES = 500
+    #pns = 1000
+    #for ns in [100, 500, 1000, 5000]:
+    for ns in [100, 500, 1000]:
+    #for ns in [50, 100, 500]:
+    #for ns in [1000]:#, 500, 100]:
+    #for ns in [100]:
+    #for ns in [50]:
+        for vs in [
+                   ['Heat', 'finetune_new_long_xwide_no_forcing_heat_1500.h5'],
+                   ['Burgers', 'finetune_new_long_xwide_no_forcing_burgers_250.h5'],
+                   ['Advection', 'finetune_new_long_xwide_no_forcing_advection_2000.h5'],
+                   ['all', 'new_long_xwide_no_forcing_advection_2000.h5'],
+                  ]:
+            # Load config
+            with open("./{}_config.yaml".format(model_name), 'r') as stream:
+                config = yaml.safe_load(stream)
+            train_args = config['args']
+            train_args['train_style'] = train_style
+            train_args['num_samples'] = ns
+            #train_args['pretraining_num_samples'] = pns
 
-        # Update file and data name
-        train_args['flnm'] = vs[0]
-        train_args['data_name'] = vs[1]
-        #train_args['train_style'] = 'next_step'
+            # Update file and data name
+            train_args['flnm'] = vs[0]
+            train_args['data_name'] = vs[1]
+            #train_args['train_style'] = 'next_step'
 
-        # Get arguments and get rid of unnecessary ones
-        train_args['model_name'] = model_name
-        device = train_args['device']
-        #prefix = train_args['flnm'] + "_" + train_args['data_name'].split("_")[0] + "_" + train_args['train_style']
-        prefix = train_args['flnm'] + "_" + train_args['train_style']
-        train_args['results_dir'] = train_args['results_dir'] + str(train_args['num_samples']) + "/"
-        print("RESULTS_DIR: {}".format(train_args['results_dir']))
-        print("PREFIX: {}".format(prefix))
-        #os.makedirs("{}pretrain_{}_{}".format(train_args['results_dir'], model_name, prefix), exist_ok=True)
-        os.makedirs("{}{}_{}".format(train_args['results_dir'], model_name, prefix), exist_ok=True)
-        shutil.copy("./{}_config.yaml".format(model_name),
-                    "{}{}_{}/{}_config.yaml".format(train_args['results_dir'], model_name, prefix, model_name))
-        shutil.copy("./plot_progress.py", "{}{}_{}/plot_progress.py".format(train_args['results_dir'], model_name, prefix))
-        shutil.copy("./compare_results.py", "{}/compare_progress.py".format(train_args['results_dir']))
+            # Get arguments and get rid of unnecessary ones
+            train_args['model_name'] = model_name
+            device = train_args['device']
+            #prefix = train_args['flnm'] + "_" + train_args['data_name'].split("_")[0] + "_" + train_args['train_style']
+            prefix = train_args['flnm'] + "_" + train_args['train_style']
+            train_args['results_dir'] = train_args['results_dir'] + str(train_args['num_samples']) + "/"
+            print("RESULTS_DIR: {}".format(train_args['results_dir']))
+            print("PREFIX: {}".format(prefix))
+            #os.makedirs("{}pretrain_{}_{}".format(train_args['results_dir'], model_name, prefix), exist_ok=True)
+            os.makedirs("{}{}_{}".format(train_args['results_dir'], model_name, prefix), exist_ok=True)
+            shutil.copy("./{}_config.yaml".format(model_name),
+                        "{}{}_{}/{}_config.yaml".format(train_args['results_dir'], model_name, prefix, model_name))
+            shutil.copy("./plot_progress.py", "{}{}_{}/plot_progress.py".format(train_args['results_dir'], model_name, prefix))
+            shutil.copy("./compare_results.py", "{}/compare_progress.py".format(train_args['results_dir']))
 
 
-        for seed in range(train_args.pop('num_seeds')):
-        #for seed in [0]:
-        #for seed in [1]:
-        #for seed in [2]:
-        #for seed in [3]:
-        #for seed in [4]:
-            #if(seed != 0):
-            #    continue
-            #if(seed not in [3,4]):
-            #    continue
-            print("\nSEED: {}\n".format(seed))
-            torch.manual_seed(seed)
-            np.random.seed(seed)
-            train_args['seed'] = seed
+            #for seed in range(train_args.pop('num_seeds')):
+            for seed in range(train_args['num_seeds']):
+            #for seed in [0]:
+            #for seed in [1]:
+            #for seed in [2]:
+            #for seed in [3]:
+            #for seed in [4]:
+                #if(seed != 0):
+                #    continue
+                #if(seed not in [3,4]):
+                #    continue
+                print("\nSEED: {}\n".format(seed))
+                torch.manual_seed(seed)
+                np.random.seed(seed)
+                train_args['seed'] = seed
 
-            model = get_model(model_name, train_args)
-            run_training(model, train_args, prefix)
-        print("Done.")
+                model = get_model(model_name, train_args)
+                run_training(model, train_args, prefix)
+            print("Done.")

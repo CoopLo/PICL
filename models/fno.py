@@ -156,13 +156,8 @@ class FNO1d(nn.Module):
         self._embed = False
         self.modes1 = modes
         self.width = width
-        #self.padding = 2 # pad the domain if input is non-periodic
         self.padding = 1 # pad the domain if input is non-periodic
-        #self.padding = 0 # pad the domain if input is non-periodic
         self.fc0 = nn.Linear(initial_step*num_channels+1, self.width) # input channel is 2: (a(x), x)
-
-        self.f_layers = nn.Linear(self.width, num_channels)
-
         self.conv0 = SpectralConv1d(self.width, self.width, self.modes1)
         self.conv1 = SpectralConv1d(self.width, self.width, self.modes1)
         self.conv2 = SpectralConv1d(self.width, self.width, self.modes1)
@@ -174,13 +169,9 @@ class FNO1d(nn.Module):
 
         self.fc1 = nn.Linear(self.width, 128)
         self.fc2 = nn.Linear(128, num_channels)
-        self._pretrain = False
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, grid, t=None, coeffs=None):
-        #print()
-        #print()
-        #print(x.shape, grid.shape, t.shape, coeffs.shape)
         # x dim = [b, x1, t*v]
         x0 = x.clone()
         if(t is not None):
@@ -210,48 +201,34 @@ class FNO1d(nn.Module):
         x1 = self.conv2(x)
         x2 = self.w2(x)
         x = x1 + x2
+        #if(self._embed):
+        #    return x
         x = F.gelu(x)
         x = self.dropout(x)
 
         x1 = self.conv3(x)
         x2 = self.w3(x)
         x = x1 + x2
-        #if(False and self._pretrain):
+
         if(self._embed):
             return x
-        if(self._pretrain):
-            x = x[..., :-self.padding]
-            x = x.permute(0, 2, 1)
-            x = self.f_layers(x)
-            return x.unsqueeze(-2)
+            #x = x[..., :-self.padding]
+            #x = x.permute(0, 2, 1)
+            #x = self.fc1(x)
+            #return x
+            #x = F.gelu(x)
+            #x = self.dropout(x)
+            #x = self.fc2(x)
+            #return x
         else:
             x = x[..., :-self.padding]
             x = x.permute(0, 2, 1)
             x = self.fc1(x)
-            #if(self._embed):
-            #    return x
             x = F.gelu(x)
-            #if(self._embed):
-            #    return x
             x = self.dropout(x)
             x = self.fc2(x)
             return x.unsqueeze(-2)
 
-    def get_loss(self, x, y, grid, loss_fn):
-        y_pred = self.forward(x, grid)[...,0,0]
-        return y_pred, loss_fn(y_pred, y)
-
-
-    #def train(self):
-    #    self._ssl = False
-
-
-    def pretrain(self):
-        self._pretrain = True
-        
-    def pretrain_off(self):
-        self._pretrain = False
-        
 
 class SpectralConv2d_fast(nn.Module):
     def __init__(self, in_channels, out_channels, modes1, modes2):

@@ -181,10 +181,10 @@ class TransformerOperatorDataset(Dataset):
                  test_ratio=0.2,
                  val_ratio=0.2,
                  num_samples=None,
-                 return_text=False,
                  rollout_length=10,
                  train_style='fixed_future',
-                 ssl=False, forcing=False, seed=0,
+                 seed=0,
+                 debug=False
                  ):
         """
         
@@ -198,16 +198,29 @@ class TransformerOperatorDataset(Dataset):
         """
         
         # Define path to files
+        print("\nDATA FILE: {}".format(f))
         self.file_path = os.path.abspath(f.filename)
         #self.file_path = os.path.abspath(saved_folder + filename + ".h5")
-        self.return_text = return_text
         self.train_style = train_style
-        self.ssl = ssl
-        self.forcing = forcing
         self._pretrain = False
         num_t = 200
         self.reduced_resolution = reduced_resolution
         self.reduced_resolution_t = reduced_resolution_t
+        self.debug = debug
+        self.split = split
+
+        # Load entire validation or test sets
+        if(split == 'train'):
+            val_ratio = 0.0
+            test_ratio = 0.0
+        elif(split == 'val'):
+            val_ratio = 1.0
+            test_ratio = 0.0
+            num_samples = 500
+        elif(split == 'test'):
+            val_ratio = 0.0
+            test_ratio = 1.0
+            num_samples = 1000
         
         # Extract list of seeds
         print("\nSEED: {}".format(seed))
@@ -218,7 +231,6 @@ class TransformerOperatorDataset(Dataset):
             #    if(filename in key):
             #        data_list.append(key)
             if('Heat' in filename):
-                print("\nHERE\n")
                 data_list = [key for key in f.keys() if(len(key.split("_")) == 3)]
             else:
                 data_list = [key for key in f.keys()]
@@ -236,8 +248,6 @@ class TransformerOperatorDataset(Dataset):
             data_list = data_list[:num_samples]
         train_idx = int(len(data_list) * (1 - test_ratio - val_ratio))
         val_idx = int(len(data_list) * (1-test_ratio))
-        #print(train_idx, val_idx)
-        #raise
 
         # Make sure no data points occur in two splits
         assert not (bool(set(self.data_list[:train_idx]) & \
@@ -326,101 +336,34 @@ class TransformerOperatorDataset(Dataset):
                 #                                self.available_idxs[-1] + 1
             self.available_idxs.extend(idxs)
 
-            if('kdv' in f.filename):
-                self.grid.append(np.array(seed_group[self.name].attrs["x"][::2][::self.reduced_resolution], dtype='f'))
-            else:
-                self.grid.append(np.array(seed_group[self.name].attrs["x"][::self.reduced_resolution], dtype='f'))
-            if(self.return_text):
-                #self.tokens.append(list(torch.Tensor(seed_group[self.name].attrs['encoded_tokens'])))
-                self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
-                self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
+            self.grid.append(np.array(seed_group[self.name].attrs["x"][::self.reduced_resolution], dtype='f'))
+            #self.tokens.append(list(torch.Tensor(seed_group[self.name].attrs['encoded_tokens'])))
+            self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
+            self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
 
-                dl_split = self.data_list[i].split("_")
-                if(dl_split[0] == 'Burgers'):
-                    omap = [float(dl_split[2]), float(dl_split[3]), 0]
-                    #print(dl_split)
-                elif(dl_split[0] == 'Heat'):
-                    omap = [0, float(dl_split[2]), 0]
-                    #omap = [0, float(dl_split[3]), 0]
-                    #print(dl_split)
-                elif(dl_split[0] == 'KdV'):
-                    omap = [float(dl_split[2]), 0, float(dl_split[3])]
-                elif(dl_split[0] == 'Advection'):
-                    omap = [0, 0, float(dl_split[2])]
-                else:
-                    raise ValueError("Invalid 1D data set used. Only Heat, Burgers, and KdV are currently supported.")
-                self.all_operator_maps.append(omap)
+            dl_split = self.data_list[i].split("_")
+            if(dl_split[0] == 'Burgers'):
+                omap = [float(dl_split[2]), float(dl_split[3]), 0]
+                #print(dl_split)
+            elif(dl_split[0] == 'Heat'):
+                omap = [0, float(dl_split[2]), 0]
+                #omap = [0, float(dl_split[3]), 0]
+                #print(dl_split)
+            elif(dl_split[0] == 'KdV'):
+                omap = [float(dl_split[2]), 0, float(dl_split[3])]
+            elif(dl_split[0] == 'Advection'):
+                omap = [0, 0, float(dl_split[2])]
+            else:
+                raise ValueError("Invalid 1D data set used. Only Heat, Burgers, and KdV are currently supported.")
+            self.all_operator_maps.append(omap)
 
         self.data = torch.Tensor(np.array(self.data)).to(device=device)#, dtype=torch.float).cuda()
         self.grid = torch.Tensor(np.array(self.grid)).to(device=device)#.cuda()
         self.all_operator_maps = torch.Tensor(np.array(self.all_operator_maps)).to(device=device)
         self.h5_file.close()
-        #print(self.available_idxs)
-        #raise
 
         print("\nNUMBER OF SAMPLES: {}".format(len(self.available_idxs)))
 
-        def forcing_term(x, t, As, ls, phis, omegas):
-            return np.sum(As[i]*torch.sin(2*np.pi/16. * ls[i]*x + omegas[i]*t + phis[i]) for i in range(len(As)))
-        
-        # Not suitable for autoregressive training
-        if(self.train_style == 'fixed_future'):
-            self.all_tokens = torch.empty(len(self.data), 500)#.to(device=device)#.cuda()
-            for idx, token in tqdm(enumerate(self.tokens)):
-                if(self.return_text):
-                    # Encode time token
-                    slice_tokens = self._encode_tokens("&" + str(self.time[idx][self.sim_time]))
-                    return_tokens = torch.Tensor(self.tokens[idx].clone()).cuda()
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cuda()))
-                    return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
-                    self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
-
-        elif(self.train_style in ['next_step', 'arbitrary_step'] and self.return_text):
-            # Create array of all legal encodings, pdes, and data
-            self.all_tokens = torch.empty(len(self.available_idxs), 500).to(device=device)#.cuda()
-
-            if(self.forcing):
-                self.forcing_terms = []
-                self.times = torch.empty(len(self.available_idxs))
-
-            print("Processing data...")
-            #print(self.available_idxs)
-            #print(self.data.shape)
-            for idx, sim_idx in tqdm(enumerate(self.available_idxs)):
-                #sim_idx = self.available_idxs[idx]      # Get valid prestored index
-                sim_num = sim_idx // self.data.shape[1] # Get simulation number
-                sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-                #print(sim_num, sim_time)
-                if(self.return_text):
-                    slice_tokens = self._encode_tokens("&" + str(self.time[sim_num][sim_time]))
-                    return_tokens = torch.Tensor(self.tokens[sim_num].clone())
-
-                    # TODO: Maybe put this back
-                    #return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cpu())).cpu()
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens))).cuda()
-
-                    return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
-                    self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
-            #for idx, sim_idx in tqdm(enumerate(self.available_idxs)):
-            #    #sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            #    sim_num = sim_idx // self.data.shape[1] # Get simulation number
-            #    sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-            #    print(sim_num, sim_time)
-            #    if(self.return_text):
-
-            #        slice_tokens = self._encode_tokens("&" + str(self.time[sim_num][sim_time]))
-            #        return_tokens = torch.Tensor(self.tokens[sim_num].clone())
-
-            #        # TODO: Maybe put this back
-            #        #return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cpu())).cpu()
-            #        return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens)))
-            #        
-            #        return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
-            #        self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
-
-
-        if(self.return_text):
-            self.all_tokens = self.all_tokens.to(device=device)#.cuda()
         self.time = torch.Tensor(self.time).to(device=device)
         self.data = self.data.cuda()
         self.grid = self.grid.cuda()
@@ -467,142 +410,13 @@ class TransformerOperatorDataset(Dataset):
         idx samples the file.
         Need to figure out a way to sample the snapshots within the file...
         '''
-        if(self._pretrain and False):
-            ###
-            # Use this for pretraining
-            ###
-            if(self.train_style == 'next_step'):
-                sim_idx = self.available_idxs[idx]      # Get valid prestored index
-                sim_num = sim_idx // self.data.shape[1] # Get simulation number
-                sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-
-                # TODO: Compare multiple snapshots from same trajectory
-                #       vs snapshots at same time from different trajectories
-                #if(self.pretrain_type == "simulation"):
-                if(False):
-                    r_sim_idx = np.random.choice(self.available_idxs, 1)
-                    #r_sim_idx = np.array([self.available_idxs[r] for r in rand_idxs])
-                    r_sim_nums = list(r_sim_idx//self.data.shape[1])
-                    #print(self.data.shape)
-                    #print(r_sim_nums)
-                    while(sim_num in r_sim_nums):
-                        #rand_idxs = np.random.choice(self.available_idxs, 1)
-                        #r_sim_idx = np.array([self.available_idxs[r] for r in rand_idxs])
-                        r_sim_idx = np.random.choice(self.available_idxs, 1)
-                        r_sim_nums = list(r_sim_idx//self.data.shape[1])
-                    r_sim_nums.append(sim_num)
-                    r_sim_nums = np.array(r_sim_nums)
-
-                    targets = np.array([0,1])
-                    shuffle_idxs = np.array([0,1])
-                    np.random.shuffle(shuffle_idxs)
-
-                    targets = targets[shuffle_idxs]
-                    r_sim_nums = r_sim_nums[shuffle_idxs]
-
-                    #print(r_sim_nums)
-                    #print(self.data.shape)
-                    #print(self.data[np.array(r_sim_nums)].shape)
-                    #print(self.data[np.array(r_sim_nums)][:,sim_time][...,np.newaxis].shape)
-
-                    #raise
-                    return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                            self.data[np.array(r_sim_nums)][:,sim_time][...,np.newaxis], \
-                            self.grid[sim_num], \
-                            self.all_tokens[idx].to(device=device), \
-                            self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
-                            targets
-                else:
-                    # This will cause wraparound to next trajectory... probably what's causing issues
-                    # Wraparound to next trajectory throws index error...
-                    r_sim_times = list(np.random.choice([1,2,3,4,5], 2)) 
-                    #r_sim_times = list(np.random.choice([1,2,3,4,5], 1)) 
-                    r_sim_times.append(0)
-
-                    # Wrap out of bounds back around to initial steps
-                    r_sim_times = (np.array(r_sim_times) + sim_time)%self.data.shape[1]
-                    targets = np.array([0,0,1])
-                    shuffle_idxs = np.array([0,1,2])
-                    #targets = np.array([0,1])
-                    #shuffle_idxs = np.array([0,1])
-                    #if(np.random.random() < 0.66):
-                    if(np.random.random() < 0.82):
-                        np.random.shuffle(shuffle_idxs)
-
-                    targets = targets[shuffle_idxs]
-                    r_sim_times = r_sim_times[shuffle_idxs] 
-                    #print(shuffle_idxs)
-                    #print(r_sim_times)
-                    #print(targets)
-                    #raise
-
-                    return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                            self.data[sim_num][np.array(r_sim_times)][...,np.newaxis], \
-                            self.grid[sim_num], \
-                            self.all_tokens[idx].to(device=device), \
-                            self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
-                            targets
-                target_frames = 0
-
-                # Need to return target that indicates correct frame
-                # Need to return multiple target frames
-                if(self.return_text):
-                            #self.data[sim_num][sim_time][...,np.newaxis], \
-                    return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                            self.data[sim_num][np.array(r_sim_times)][...,np.newaxis], \
-                            self.grid[sim_num], \
-                            self.all_tokens[idx].to(device=device), \
-                            self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
-                            targets
-                else:
-                    if(sim_time == 0):
-                        raise ValueError("WHOOPSIE")
-                    return self.data[sim_num][sim_time - self.initial_step:sim_time], \
-                                   self.data[sim_num][sim_time][np.newaxis], \
-
         # Everything is precomputed
         if(self.train_style == 'fixed_future'):
-            #if(self._pretrain_tokens):
-            #    return self.data[idx][:self.initial_step], \
-            #       self.data[idx][self.sim_time][...,np.newaxis], \
-            #       self.grid[idx], \
-            #       self.all_tokens[idx].to(device=device), \
-            #       self.time[idx][self.sim_time], \
-            #       self.all_operator_maps[idx]
-            #else:
-            if(self.return_text):
-                if(self._pretrain):
-                    return self.data[idx][:self.initial_step], \
-                       self.data[idx][self.sim_time][...,np.newaxis], \
-                       self.grid[idx], \
-                       self.all_tokens[idx].to(device=device), \
-                       self.time[idx][self.sim_time], \
-                       self.all_operator_maps[idx]
-                else:
-                    return self.data[idx][:self.initial_step], \
-                       self.data[idx][self.sim_time][...,np.newaxis], \
-                       self.grid[idx], \
-                       self.all_tokens[idx].to(device=device), \
-                       self.time[idx][self.sim_time], \
-                       self.all_operator_maps[idx]
-            else:
-                #print(self.data[idx][:self.initial_step].shape)
-                #print(self.data[idx][self.sim_time][...,np.newaxis].shape)
-                #print(self.grid[idx].shape)
-                return self.data[idx][:self.initial_step], \
-                   self.data[idx][self.sim_time], \
-                   self.grid[idx]
-                   #self.data[idx][self.sim_time][...,np.newaxis], \
-            #if(self.return_text):
-            #    return self.data[idx][:self.initial_step], \
-            #           self.data[idx][self.sim_time][...,np.newaxis], \
-            #           self.grid[idx], \
-            #           self.all_tokens[idx].to(device=device), \
-            #           self.time[idx][self.sim_time]
-            #else:
-            #    return self.data[idx][...,:self.initial_step,:], \
-            #           self.data[idx][self.sim_time], \
-            #           self.grid[udx][self.sim_time]
+            return self.data[idx][:self.initial_step], \
+               self.data[idx][self.sim_time][...,np.newaxis], \
+               self.grid[idx], \
+               self.time[idx][self.sim_time], \
+               self.all_operator_maps[idx]
 
         # Need to slice according to available data
         elif(self.train_style == 'next_step'):
@@ -610,91 +424,22 @@ class TransformerOperatorDataset(Dataset):
             sim_num = sim_idx // self.data.shape[1] # Get simulation number
             sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
 
-            if(self.return_text):
-                return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                   self.data[sim_num][sim_time][...,np.newaxis], \
-                   self.grid[sim_num], \
-                   self.all_tokens[sim_num].to(device=device), \
-                   self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
-                   self.all_operator_maps[sim_num]
-            else:
-                #print(idx)
-                #print(sim_idx)
-                #print(sim_num, sim_time)
-                #print(len(self.available_idxs))
-                #print(self.data.shape)
-                if(sim_time == 0):
-                    raise ValueError("WHOOPSIE")
-                return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                   self.data[sim_num][sim_time], \
-                   self.grid[sim_num]
+            return self.data[sim_num][sim_time-self.initial_step:sim_time], \
+               self.data[sim_num][sim_time][...,np.newaxis], \
+               self.grid[sim_num], \
+               self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
+               self.all_operator_maps[sim_num]
 
         elif(self.train_style == 'arbitrary_step'):
             sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            #sim_idx = idx      # Get valid prestored index
             sim_num = sim_idx // self.data.shape[1] # Get simulation number
             sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
 
-            if(self.return_text):
-                return self.data[sim_num][:self.initial_step], \
-                   self.data[sim_num][sim_time][...,np.newaxis], \
-                   self.grid[sim_num], \
-                   self.all_tokens[sim_num].to(device=device), \
-                   self.time[sim_num][sim_time], \
-                   self.all_operator_maps[sim_num]
-                #return self.data[sim_num][:self.initial_step], \
-                #   self.data[sim_num][sim_time][...,np.newaxis], \
-                #   self.grid[sim_num], \
-                #   self.all_tokens[sim_num].to(device=device), \
-                #   self.time[sim_num][sim_time], \
-                #return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-            else:
-                return self.data[sim_num][:self.initial_step], \
-                   self.data[sim_num][sim_time][...,np.newaxis], \
-                   self.grid[sim_num], \
-                   self.all_tokens[sim_num].to(device=device), \
-                   self.time[sim_num][sim_time], \
-                   self.all_operator_maps[sim_num]
-                #return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                #       self.data[sim_num][sim_time][...,np.newaxis], \
-                #       self.grid[sim_num][...,np.newaxis]
-
-        # Need to slice according ot available data and rollout
-        elif(self.train_style == 'rollout'):
-            sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            sim_num = sim_idx // self.data.shape[1] # Get simulation number
-            sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-            if(self.return_text):
-                # Add additional times to text encoding.
-                slice_times = self.time[sim_num][sim_time-self.initial_step:sim_time+self.rollout_length] # Get times
-                #print(sim_time, sim_time - self.initial_step, sim_time + self.rollout_length, self.initial_step, self.rollout_length)
-                slice_tokens = torch.empty((len(slice_times), 15))
-                for idx, st in enumerate(slice_times):
-                    # Loses a very small amount of precision
-                    # Need predefined tensor
-                    slce = self._encode_tokens("&" + str(st))
-                    if(len(slce) < 15):
-                        slce.extend([20.]*(15-len(slce)))
-                    slice_tokens[idx] = torch.Tensor(slce)[:15].to(device=device)#.cuda()
-
-                # This goes into ssl training loop.
-                return_tokens = self.tokens[sim_num].copy()
-                return_tokens.extend([len(self.WORDS)]*(500 - len(return_tokens)))
-                return_tokens = torch.Tensor(return_tokens)
-                return_tokens = return_tokens.repeat(self.rollout_length, 1)
-                slice_tokens = torch.swapaxes(slice_tokens.unfold(0, 10, 1)[:-1], 1, 2).reshape(self.rollout_length, -1)
-                all_tokens = torch.cat((return_tokens, slice_tokens), dim=1)
-
-                # Most processing happens in the training loop
-                return self.data[sim_num][sim_time-self.initial_step:sim_time+self.rollout_length,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time:sim_time+self.rollout_length][...,np.newaxis], \
-                       self.grid[sim_num][...,np.newaxis], \
-                       all_tokens
-                       #return_tokens, slice_tokens
-            else:
-                return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time:sim_time+self.rollout_length], \
-                       self.grid[sim_num][...,np.newaxis]
+            return self.data[sim_num][:self.initial_step], \
+               self.data[sim_num][sim_time][...,np.newaxis], \
+               self.grid[sim_num], \
+               self.time[sim_num][sim_time], \
+               self.all_operator_maps[sim_num]
 
 
 class TransformerMultiOperatorDataset(Dataset):
@@ -711,11 +456,13 @@ class TransformerMultiOperatorDataset(Dataset):
                  test_ratio=0.2,
                  val_ratio=0.2,
                  num_samples=None,
-                 return_text=False,
                  rollout_length=10,
                  train_style='fixed_future',
                  seed=None,
-                 augment=False, ssl=False, forcing_term='full', flnm='all',
+                 finetune=False,
+                 forcing_term='full',
+                 flnm='all',
+                 debug=False,
                  ):
         """
         
@@ -729,69 +476,32 @@ class TransformerMultiOperatorDataset(Dataset):
         """
 
         # Define path to files
-        #self.file_path = os.path.abspath(f.filename)
-        #self.file_path = os.path.abspath(saved_folder + filename + ".h5")
-        self.return_text = return_text
         self.train_style = train_style
-        self.augment = augment
-        self.ssl = ssl
         self.forcing = False
-        self._pretrain_tokens = False
         self.reduced_resolution = reduced_resolution
         self.reduced_resolution_t = reduced_resolution_t
-
-
-        #data_files = ['varied_heat_10000.h5', 'varied_burgers_2500.h5', 'varied_kdv_2500.h5']
-
-        #data_files = ['kdv_1000.h5', 'heat_1000.h5', 'burgers_1000.h5']
-        #data_files = ['heat_1000.h5', 'burgers_1000.h5']
-        #data_files = ['heat_250.h5', 'burgers_250.h5', 'kdv_250.h5']
-        #data_files = ['heat_250.h5', 'burgers_250.h5', 'new_kdv_250.h5']
         self.forcing_term = forcing_term
-        #print("\nFORCING TERM: {}\n".format(self.forcing_term))
-        #raise
-        if(self.forcing_term == 'full'):
-            data_files = ['heat_2000.h5', 'burgers_250.h5', 'new_kdv_250.h5']
-        elif(self.forcing_term == 'non_td'):
-            #data_files = ['non_td_heat_1000.h5', 'non_td_burgers_250.h5', 'non_td_new_kdv_250.h5']
-            data_files = ['xwide_non_td_heat_2000.h5', 'xwide_non_td_burgers_250.h5', 'xwide_non_td_kdv_250.h5']
-        elif(self.forcing_term == 'none'):
-            #data_files = ['non_td_heat_1000.h5', 'non_td_burgers_250.h5', 'non_td_new_kdv_250.h5']
-            if(flnm == 'all'):
-                data_files = ['new_long_xwide_no_forcing_heat_2000.h5',
-                              'new_long_xwide_no_forcing_burgers_250.h5',
-                              'new_long_xwide_no_forcing_advection_2000.h5',
-                              ]#,
-                              #'new_long_xwide_no_forcing_kdv_500.h5']#, 'xwide_no_forcing_ks_250.h5']
-                print("\n\nNO FORCING ALL DATA\n\n")
-            elif(flnm == 'Burgers'):
-                data_files = ['non_td_burgers_250.h5']
-            elif(flnm == 'Heat'):
-                data_files = ['non_td_heat_1000.h5']
-            else:
-                raise ValueError("Invalid dataset choice.")
+        self.finetune = finetune
+        self.flnm = flnm
+        self.debug = debug
+        self.split = split
 
-        elif(self.forcing_term == 'all'):
-            #data_files = ['non_td_heat_1000.h5', 'non_td_burgers_250.h5', 'non_td_new_kdv_250.h5']
-            if(flnm == 'all'):
-                data_files = ['new_long_xwide_no_forcing_heat_2000.h5',
-                              'new_long_xwide_no_forcing_burgers_250.h5',
-                              'new_long_xwide_no_forcing_advection_2000.h5',
-                              'varied_heat_10000.h5', 'varied_burgers_2500.h5', 'varied_kdv_2500.h5'
-                              ]#,
-                              #'new_long_xwide_no_forcing_kdv_500.h5']#, 'xwide_no_forcing_ks_250.h5']
-                print("\n\nNO FORCING ALL DATA\n\n")
-            elif(flnm == 'Burgers'):
-                data_files = ['non_td_burgers_250.h5']
-            elif(flnm == 'Heat'):
-                data_files = ['non_td_heat_1000.h5']
-            else:
-                raise ValueError("Invalid dataset choice.")
+        # Load entire validation or test sets
+        if(split == 'train'):
+            val_ratio = 0.0
+            test_ratio = 0.0
+        elif(split == 'val'):
+            val_ratio = 1.0
+            test_ratio = 0.0
+            num_samples = 500
+            #num_samples = 100
+        elif(split == 'test'):
+            val_ratio = 0.0
+            test_ratio = 1.0
+            num_samples = 1000
+            #num_samples = 100
 
-            #data_files = ['non_td_burgers_250.h5']
-            #data_files = ['non_td_burgers_250.h5']
-        else:
-            raise ValueError("Invalid forcing term selection. Select 'full, 'non_td', or 'none'.")
+        self.get_data_files()
 
         if(self.train_style == 'next_step' and sim_time == -1):
             self.sim_time = num_t//self.reduced_resolution_t - 1
@@ -807,7 +517,7 @@ class TransformerMultiOperatorDataset(Dataset):
         self.available_idxs = []
         self.all_data_list = []
         self.all_operator_maps = []
-        for df in data_files:
+        for df in self.data_files:
             print("\nDATA FILE: {}".format(df))
             f = h5py.File("{}{}".format(base_path, df), 'r')
 
@@ -815,16 +525,24 @@ class TransformerMultiOperatorDataset(Dataset):
             torch.manual_seed(seed)
             np.random.seed(seed)
             if('heat' in df):
-                print(list(f.keys())[0])
                 if(len(list(f.keys())[0].split("_")) == 3):
                     data_list = [key for key in f.keys()]
                 elif(len(list(f.keys())[0].split("_")) == 4):
-                    #data_list = ['_'.join(k for k in np.array(key.split("_"))[np.array([0,1,3])]) for key in f.keys()]
-                    #print(data_list)
                     data_list = [key for key in f.keys()]
-                #data_list = [key for key in f.keys() if(len(key.split("_")) == 3) else '_'.join(k for k in key.split("_")[0,1,4])]
-                #print(data_list)
-                #raise
+            if('burgers' in df):
+                data_list = [key for key in f.keys() if(float(key.split("_")[-1]) != 0.1)] # Don't have this in fine-tune set
+                alphas = []
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        alphas.append(float(split_key[2]))
+                        betas.append(float(split_key[3]))
+                    print("\n\nBURGERS COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(alphas))
+                    print(np.unique(betas))
+                    print()
+                    print()
             else:
                 data_list = [key for key in f.keys()]
             np.random.shuffle(data_list)
@@ -849,33 +567,13 @@ class TransformerMultiOperatorDataset(Dataset):
             # Hold on to all of the datas
             self.all_data_list.append(self.data_list)
 
-            ###
-            # Create multi-class label for each equation.
-            #
-            # [1,0,0] corresponds to nonlinear advection term (Burgers, KdV)
-            # [0,1,0] corresponds to diffusion term (Burgers, Heat)
-            # [0,0,1] corresponds to third order term (KdV)
-            #
-            ###
-            #o_map = [[1,1,0] if('burgers' in df) else [0,1,0] if('heat' in df) else [1,0,1]] * len(self.data_list)
-            #self.all_operator_maps.append(o_map)
-
             # Time steps used as initial conditions
             self.initial_step = initial_step
             self.rollout_length = rollout_length
 
-            self.WORDS = ['(', ')', '+', '-', '*', '/', 'Derivative', 'Sum', 'j', 'A_j', 'l_j',
-                     'omega_j', 'phi_j'    , 'sin', 't', 'u', 'x', 'dirichlet', 'neumann',
-                     "None", '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10^',
-                     #'E', ',', '.', '&']
-                     'E', 'e', ',', '.', '&']
-            self.word2id = {w: i for i, w in enumerate(self.WORDS)}
-            self.id2word = {i: w for i, w in enumerate(self.WORDS)}
             self.num_x = num_x
             self.num_t = num_t
                        
-            if('kdv' in df):
-                self.num_x = 400 
             if('varied' in df):
                 self.num_x = 100
                 self.num_t = 100
@@ -886,325 +584,158 @@ class TransformerMultiOperatorDataset(Dataset):
                 self.name = "pde_{}-{}".format(self.num_t, self.num_x)
                 self.reduced_resolution_t = 4
                 self.reduced_resolution = 4
-            #self.name = "pde_{}-{}".format(self.num_x, self.num_t)
 
-            #self.h5_file = h5py.File(self.file_path, 'r')
-            #self.sim_time = sim_time
-
-            #print(len(self.data_list))
-            #raise
             for i in tqdm(range(len(self.data_list))):
                 seed_group = f[self.data_list[i]]
-                if('kdv' in df):
-                    self.data.append(seed_group[self.name][0][:,::2][::self.reduced_resolution_t,::self.reduced_resolution])
-                else:
-                    self.data.append(seed_group[self.name][0][::self.reduced_resolution_t,::self.reduced_resolution])
+                self.data.append(seed_group[self.name][0][::self.reduced_resolution_t,::self.reduced_resolution])
 
                 if(self.train_style == 'next_step'):
                     idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
                 elif(self.train_style == 'arbitrary_step'):
-                    #idxs = np.arange(0, len(seed_group[self.name][0]))[self.initial_step:]
                     idxs = np.arange(0, len(seed_group[self.name][0])//self.reduced_resolution_t)[self.initial_step:self.sim_time]
-
-                #else:#(self.train_style == 'rollout'):
-                #    length = len(seed_group[self.name][0])
-                #    idxs = np.arange(0, length)[self.initial_step:length-self.rollout_length]
-                elif(self.train_style == 'rollout'):
-                    length = len(seed_group[self.name][0])
-                    idxs = np.arange(0, length)[self.initial_step:length-self.rollout_length]
                 elif(self.train_style == 'fixed_future'):
                     idxs = np.array([i])
                 else:
-                    raise
+                    error_str = "Supported train styles are: 'next_step', 'arbitrary_step', and 'fixed_future'."
+                    error_str += " Got: {}".format(self.train_style)
+                    raise ValueError(error_str)
 
                 if(len(self.available_idxs) != 0):
                     idxs += self.num_t//self.reduced_resolution_t - (self.sim_time-1) + self.available_idxs[-1] if(self.train_style in ['next_step', 'arbitrary_step']) else \
                             self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
                     self.available_idxs[-1] + len(seed_group[self.name][0]) - self.sim_time + 1
                 self.available_idxs.extend(idxs)
-                #print(idxs)
 
-                if('kdv' in df):
-                    self.grid.append(np.array(seed_group[self.name].attrs["x"], dtype='f')[::2][::self.reduced_resolution])
-                else:
-                    self.grid.append(np.array(seed_group[self.name].attrs["x"], dtype='f')[::self.reduced_resolution])
+                self.grid.append(np.array(seed_group[self.name].attrs["x"], dtype='f')[::self.reduced_resolution])
 
                 # Get operator coefficients
-                if(self.return_text):
-                    self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
-                    self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
-                    dl_split = self.data_list[i].split("_")
-                    if(dl_split[0] == 'Burgers'):
-                        omap = [float(dl_split[2]), float(dl_split[3]), 0]
-                    elif(dl_split[0] == 'Heat'):
-                        omap = [0, float(dl_split[2]), 0]
-                    elif(dl_split[0] == 'KdV'):
-                        omap = [float(dl_split[2]), 0, float(dl_split[3])]
-                    elif(dl_split[0] == 'Advection'):
-                        omap = [0, 0, float(dl_split[2])]
-                    else:
-                        raise ValueError("Invalid 1D data set used. Only Heat, Burgers, and KdV are currently supported.")
-                    self.all_operator_maps.append(omap)
+                self.tokens.append(torch.Tensor(seed_group[self.name].attrs['encoded_tokens']))
+                self.time.append(seed_group[self.name].attrs['t'][::self.reduced_resolution_t])
+                dl_split = self.data_list[i].split("_")
+                if(dl_split[0] == 'Burgers'):
+                    omap = [float(dl_split[2]), float(dl_split[3]), 0]
+                elif(dl_split[0] == 'Heat'):
+                    omap = [0, float(dl_split[2]), 0]
+                elif(dl_split[0] == 'KdV'):
+                    omap = [float(dl_split[2]), 0, float(dl_split[3])]
+                elif(dl_split[0] == 'Advection'):
+                    omap = [0, 0, float(dl_split[2])]
+                else:
+                    raise ValueError("Invalid 1D data set used. Only Heat, Burgers, and KdV are currently supported.")
+                self.all_operator_maps.append(omap)
 
             f.close()
-            #raise
 
-        #raise
-        #print(self.available_idxs)
-        self.data = torch.Tensor(np.array(self.data))#.to(device=device)
-        #raise
-        self.grid = torch.Tensor(np.array(self.grid))#.to(device=device)
+        self.data = torch.Tensor(np.array(self.data))
+        self.grid = torch.Tensor(np.array(self.grid))
         self.all_data_list = np.array(self.all_data_list).flatten()
         self.all_operator_maps = torch.Tensor(np.array(self.all_operator_maps).reshape((-1,3))).float()
-        #print(self.available_idxs)
-        #print(self.all_data_list)
-        #raise
-
+        self.time = torch.Tensor(self.time)
         print("\nNUMBER OF SAMPLES: {}".format(len(self.available_idxs)))
-        #raise
-
-        def forcing_term(x, t, As, ls, phis, omegas):
-            return np.sum(As[i]*torch.sin(2*np.pi/16. * ls[i]*x + omegas[i]*t + phis[i]) for i in range(len(As)))
-
-        # Not suitable for autoregressive training
-        if(self.train_style == 'fixed_future'):
-            self.all_tokens = torch.empty(len(self.data), 500)#.to(device=device)#.cuda()
-            for idx, token in tqdm(enumerate(self.tokens)):
-                if(self.return_text):
-                    # Encode time token
-                    slice_tokens = self._encode_tokens("&" + str(self.time[idx][self.sim_time]))
-                    return_tokens = torch.Tensor(self.tokens[idx].clone()).cuda()
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens).cuda()))
-                    return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
-                    self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
-
-
-        elif(self.train_style in ['next_step', 'arbitrary_step'] and self.return_text):
-            # Create array of all legal encodings, pdes, and data
-            self.all_tokens = torch.empty(len(self.available_idxs), 500)#.to(device=device)#.cuda()
-
-            #print()
-            #print()
-            #print(self.available_idxs)
-            #print()
-            #print()
-            #raise
-            #print(len(self.time))
-            #print(self.time[0].shape)
-            #print(self.data.shape)
-            #raise
-            for idx, sim_idx in tqdm(enumerate(self.available_idxs)):
-                #sim_idx = self.available_idxs[idx]      # Get valid prestored index
-                sim_num = sim_idx // self.data.shape[1] # Get simulation number
-                sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-                if(self.return_text):
-                    try:
-                        slice_tokens = self._encode_tokens("&" + str(self.time[sim_num][sim_time]))
-                    except IndexError:
-                        print()
-                        print()
-                        print(self.data.shape, len(self.time), len(self.time[0]), sim_num, sim_time)
-                        print()
-                        print()
-                        raise
-                    return_tokens = torch.Tensor(self.tokens[sim_num].clone())
-
-                    # TODO: Maybe put this back
-                    return_tokens = torch.cat((return_tokens, torch.Tensor(slice_tokens))).cuda()
-
-                    return_tokens = torch.cat((return_tokens, torch.Tensor([len(self.WORDS)]*(500 - len(return_tokens))).cuda()))
-                    self.all_tokens[idx] = return_tokens.to(device=device)#.cuda()
-
-        if(self.return_text):
-            self.all_tokens = self.all_tokens#.to(device=device)#.cuda()
-        self.time = torch.Tensor(self.time)#.to(device=device)
-        if(self.augment):
-            print("\nNumber of augmented samples: {}\n".format(len(self.all_tokens)))
-        print()
-        print()
         print(self.data.shape)
-        print()
-        print()
 
-    def _encode_tokens(self, all_tokens):
-        encoded_tokens = []
-        num_concat = 0
-        for i in range(len(all_tokens)):
-            try: # All the operators, bcs, regular symbols
-                encoded_tokens.append(self.word2id[all_tokens[i]])
-                if(all_tokens[i] == "&"): # 5 concatenations before we get to lists of sampled values
-                    num_concat += 1
-            except KeyError: # Numerical values
-                if(isinstance(all_tokens[i], str)):
-                    for v in all_tokens[i]:
-                        try:
-                            encoded_tokens.append(self.word2id[v])
-                        except KeyError:
-                            print(all_tokens)
-                            raise
-                    if(num_concat >= 5): # We're in a list of sampled parameters
-                        encoded_tokens.append(self.word2id[","])
+    def get_data_files(self):
+        if(self.forcing_term == 'full'):
+            self.data_files = ['heat_2000.h5', 'burgers_250.h5', 'new_kdv_250.h5']
+        elif(self.forcing_term == 'non_td'):
+            self.data_files = ['xwide_non_td_heat_2000.h5', 'xwide_non_td_burgers_250.h5', 'xwide_non_td_kdv_250.h5']
+        elif(self.forcing_term == 'none'):
+            if(self.flnm == 'all'):
+                if(self.finetune):
+                    if(self.split == 'train'):
+                        self.data_files = ['finetune_new_long_xwide_no_forcing_heat_1500.h5',
+                                           'finetune_new_long_xwide_no_forcing_burgers_250.h5',
+                                           'finetune_new_long_xwide_no_forcing_advection_2000.h5',
+                        ]
+                    elif(self.split == 'val'):
+                        self.data_files = ['validate_new_long_xwide_no_forcing_heat_100.h5',
+                                           'validate_new_long_xwide_no_forcing_burgers_25.h5',
+                                           'validate_new_long_xwide_no_forcing_advection_125.h5',
+                        ]
+                    elif(self.split == 'test'):
+                        self.data_files = ['test_new_long_xwide_no_forcing_heat_200.h5',
+                                           'test_new_long_xwide_no_forcing_burgers_50.h5',
+                                           'test_new_long_xwide_no_forcing_advection_250.h5',
+                        ]
                 else:
-                    raise KeyError("Unrecognized token: {}".format(all_tokens[i]))
+                    self.data_files = ['new_long_xwide_no_forcing_heat_2000.h5',
+                                       'new_long_xwide_no_forcing_burgers_250.h5',
+                                       'new_long_xwide_no_forcing_advection_2000.h5',
+                                      ]
+                print("\n\nNO FORCING ALL DATA\n\n")
+            elif(self.flnm == 'Burgers'):
+                self.data_files = ['non_td_burgers_250.h5']
+            elif(self.flnm == 'Heat'):
+                self.data_files = ['non_td_heat_1000.h5']
+            else:
+                raise ValueError("Invalid dataset choice.")
 
-        return encoded_tokens
+        elif(self.forcing_term == 'all'):
+            if(self.flnm == 'all'):
+                self.data_files = ['new_long_xwide_no_forcing_heat_2000.h5',
+                              'new_long_xwide_no_forcing_burgers_250.h5',
+                              'new_long_xwide_no_forcing_advection_2000.h5',
+                              'varied_heat_10000.h5', 'varied_burgers_2500.h5', 'varied_kdv_2500.h5'
+                              ]
+                print("\n\nNO FORCING ALL DATA\n\n")
+            elif(self.flnm == 'Burgers'):
+                self.data_files = ['non_td_burgers_250.h5']
+            elif(self.flnm == 'Heat'):
+                self.data_files = ['non_td_heat_1000.h5']
+            else:
+                raise ValueError("Invalid dataset choice.")
 
-    def _one_hot_encode(self, tokens):
-        encoding = np.zeros((len(tokens), len(self.WORDS)+1))
-        encoding[range(tokens.shape[0]), tokens] = 1
-        return encoding
+        else:
+            raise ValueError("Invalid forcing term selection. Select 'full, 'non_td', or 'none'.")
+
+        if(self.debug):
+            print("\nData Files for {}:".format(self.split))
+            for d in self.data_files:
+                print(d)
+            print()
 
     def __len__(self):
         if(self.train_style == 'fixed_future'):
             return self.data.shape[0]
         elif(self.train_style in ['next_step', 'arbitrary_step']):
-            #if(len(self.all_tokens.shape) == 3):
-            if(self.augment and self.ssl):
-                return len(self.available_idxs)
-            elif(self.augment):
-                return len(self.all_tokens_map)
-            else:
-                return len(self.available_idxs)
+            return len(self.available_idxs)
         elif(self.train_style == 'rollout'):
             return len(self.available_idxs)
-
-    def pretrain(self):
-        self._pretrain_tokens = True
-
-    def pretrain_off(self):
-        self._pretrain_tokens = False
 
     def __getitem__(self, idx):
         '''
         idx samples the file.
         Need to figure out a way to sample the snapshots within the file...
         '''
-        #print("\n\nHERE\n\n")
-        #print("\nHERE\n")
-        # Everything is precomputed
         if(self.train_style == 'fixed_future'):
-            if(self.return_text):
-                if(self._pretrain_tokens):
-                    return self.data[idx][:self.initial_step], \
-                       self.data[idx][self.sim_time][...,np.newaxis], \
-                       self.grid[idx], \
-                       self.all_tokens[idx].to(device=device), \
-                       self.time[idx][self.sim_time], \
-                       self.all_operator_maps[idx]
-                else:
-                    return self.data[idx][:self.initial_step], \
-                       self.data[idx][self.sim_time][...,np.newaxis], \
-                       self.grid[idx], \
-                       self.all_tokens[idx].to(device=device), \
-                       self.time[idx][self.sim_time]#, \
-            else:
-                return self.data[idx][:self.initial_step], \
-                       self.data[idx][self.sim_time], \
-                       self.grid[idx]
+            return self.data[idx][:self.initial_step], \
+               self.data[idx][self.sim_time][...,np.newaxis], \
+               self.grid[idx], \
+               self.time[idx][self.sim_time], \
+               self.all_operator_maps[idx]
 
         # Need to slice according to available data
         elif(self.train_style == 'next_step'):
             sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            #sim_idx = idx      # Get valid prestored index
             sim_num = sim_idx // self.data.shape[1] # Get simulation number
             sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
 
-            if(self.return_text):
-                if(self._pretrain_tokens):
-                    #print(self.data.shape)
-                    #print(self.grid.shape)
-                    #print("\n\nHERE??\n\n")
-                    #print(self.time[sim_num][self.sim_time] - self.sim_num][sim_time-1]
-                    return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                       self.data[sim_num][sim_time][...,np.newaxis], \
-                       self.grid[sim_num], \
-                       self.all_tokens[sim_num].to(device=device), \
-                       self.time[sim_num][sim_time], \
-                       self.all_operator_maps[sim_num]
-                       #self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1], \
-                else:
-                    return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                       self.data[sim_num][sim_time][...,np.newaxis], \
-                       self.grid[sim_num], \
-                       self.all_tokens[sim_num].to(device=device), \
-                       self.time[sim_num][sim_time], \
-                       self.all_operator_maps[sim_num]
-                       #self.time[sim_num][self.sim_time] - self.time[sim_num][sim_time-1]
-            else:
-                if(sim_time == 0):
-                    raise ValueError("WHOOPSIE")
-                return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                               self.data[sim_num][sim_time][...,np.newaxis], \
-                               self.grid[sim_num]
-                           #self.all_tokens[idx].to(device=device), \
-                           #self.time[sim_num][sim_time] - self.time[sim_num][sim_time-1]#, \
-                           #self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis]
-                #return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                #       self.data[sim_num][sim_time][...,np.newaxis], \
-                #       self.grid[sim_num][...,np.newaxis]
+            return self.data[sim_num][sim_time-self.initial_step:sim_time], \
+               self.data[sim_num][sim_time][...,np.newaxis], \
+               self.grid[sim_num], \
+               self.time[sim_num][sim_time], \
+               self.all_operator_maps[sim_num]
 
         elif(self.train_style == 'arbitrary_step'):
             sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            #sim_idx = idx      # Get valid prestored index
             sim_num = sim_idx // self.data.shape[1] # Get simulation number
             sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
 
-            if(self.return_text):
-                #print(sim_idx, sim_num, sim_time)
-                return self.data[sim_num][:self.initial_step], \
-                   self.data[sim_num][sim_time][...,np.newaxis], \
-                   self.grid[sim_num], \
-                   self.all_tokens[sim_num].to(device=device), \
-                   self.time[sim_num][sim_time], \
-                   self.all_operator_maps[sim_num]
-                #return self.data[sim_num][sim_time-self.initial_step:sim_time], \
-                #return self.data[sim_num][0], \
-                #   self.data[sim_num][sim_time][...,np.newaxis], \
-                #   self.grid[sim_num], \
-                #   self.all_tokens[idx].to(device=device), \
-                #   self.time[sim_num][sim_time]# - self.time[sim_num][sim_time-1]#, \
-                   #self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis]
-            else:
-                return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time][...,np.newaxis], \
-                       self.grid[sim_num][...,np.newaxis]
-
-        # Need to slice according ot available data and rollout
-        elif(self.train_style == 'rollout'):
-            sim_idx = self.available_idxs[idx]      # Get valid prestored index
-            sim_num = sim_idx // self.data.shape[1] # Get simulation number
-            sim_time = sim_idx % self.data.shape[1] # Get time from that simulation
-            if(self.return_text):
-                # Add additional times to text encoding.
-                slice_times = self.time[sim_num][sim_time-self.initial_step:sim_time+self.rollout_length] # Get times
-                #print(sim_time, sim_time - self.initial_step, sim_time + self.rollout_length, self.initial_step, self.rollout_length)
-                slice_tokens = torch.empty((len(slice_times), 15))
-                for idx, st in enumerate(slice_times):
-                    # Loses a very small amount of precision
-                    # Need predefined tensor
-                    slce = self._encode_tokens("&" + str(st))
-                    if(len(slce) < 15):
-                        slce.extend([20.]*(15-len(slce)))
-                    slice_tokens[idx] = torch.Tensor(slce)[:15].to(device=device)#.cuda()
-
-                # This goes into ssl training loop.
-                return_tokens = self.tokens[sim_num].copy()
-                return_tokens.extend([len(self.WORDS)]*(500 - len(return_tokens)))
-                return_tokens = torch.Tensor(return_tokens)
-                return_tokens = return_tokens.repeat(self.rollout_length, 1)
-                slice_tokens = torch.swapaxes(slice_tokens.unfold(0, 10, 1)[:-1], 1, 2).reshape(self.rollout_length, -1)
-                all_tokens = torch.cat((return_tokens, slice_tokens), dim=1)
-
-                # Most processing happens in the training loop
-                return self.data[sim_num][sim_time-self.initial_step:sim_time+self.rollout_length,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time:sim_time+self.rollout_length][...,np.newaxis], \
-                       self.grid[sim_num][...,np.newaxis], \
-                       all_tokens
-                       #return_tokens, slice_tokens
-            else:
-                return self.data[sim_num][sim_time-self.initial_step:sim_time,...][...,np.newaxis], \
-                       self.data[sim_num][sim_time:sim_time+self.rollout_length], \
-                       self.grid[sim_num][...,np.newaxis]
+            return self.data[sim_num][:self.initial_step], \
+               self.data[sim_num][sim_time][...,np.newaxis], \
+               self.grid[sim_num], \
+               self.time[sim_num][sim_time], \
+               self.all_operator_maps[sim_num]
 
 
 class TransformerOperatorDataset2D(Dataset):
@@ -2252,7 +1783,6 @@ class MultiDataset2D(Dataset):
         self.rollout_length = rollout_length
         self.split_style = split_style
         self.pretraining = pretraining
-        self._pretrain_tokens = False
         
         data_files = ['2d_Heat_30s_50inits_19nus_ns_match.h5', '2d_Burgers_30s_5inits_304systems_ns_match.h5']
         #data_files = ['2d_Burgers_5s_5inits_448systems.h5', '2d_Heat_5s_50inits_28nus.h5']
@@ -2458,14 +1988,6 @@ class MultiDataset2D(Dataset):
 
         # Create data tuples?
         self.data_tuples = []
-        #print(self.data_idxs)
-        #raise
-        #print(self.data_list[-1])
-        #print(self.tokens.shape)
-        #print(self.tokens[-1][0])
-        #print(self.data.shape)
-        #print(self.data_list)
-        #raise
         if(self.split_style == 'initial_condition'):
             #for idx in range(len(self.idxs)):
             for idx in self.data_idxs:
