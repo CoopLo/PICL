@@ -910,9 +910,9 @@ def run_training(old_model, config, prefix):
     # Use Adam for Hyena
     optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
     #optimizer = torch.optim.SGD(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
-    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config['scheduler_step'], gamma=config['scheduler_gamma'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],# div_factor=1e6,
-                                                    steps_per_epoch=len(train_loader), epochs=config['epochs'])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config['scheduler_step'], gamma=config['scheduler_gamma'])
+    #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],# div_factor=1e6,
+    #                                                steps_per_epoch=len(train_loader), epochs=config['epochs'])
     
     loss_fn = nn.L1Loss(reduction="mean")
     #loss_fn = nn.MSELoss(reduction="mean")
@@ -1075,9 +1075,9 @@ def single_run_training(old_model, config, prefix, dset):
     #    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],# div_factor=1e6,
     #                                                    steps_per_epoch=len(train_loader), epochs=config['epochs'])
     #else:
-    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config['scheduler_step'], gamma=config['scheduler_gamma'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],# div_factor=1e6,
-                                                    steps_per_epoch=len(train_loader), epochs=config['epochs'])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config['scheduler_step'], gamma=config['scheduler_gamma'])
+    #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'],
+    #                                 steps_per_epoch=len(train_loader), epochs=config['epochs'])
     
     loss_fn = nn.L1Loss(reduction="mean")
     #loss_fn = nn.MSELoss(reduction="mean")
@@ -1202,13 +1202,45 @@ if __name__ == "__main__":
     #    raise
 
     # Load config
-    #pns = 0
+    pns = 0
     #pns = 100
-    pns = 1000
+    #pns = 1000
     #pns = 5000
+
+    #train_style = 'fixed_future'
+    train_style = 'next_step'
+
+    #contrastive_loss = 'normalGCL'
+    contrastive_loss = 'passthroughGCL'
+
+    sim_time = -1 if(train_style == 'fixed_future') else 20
+    epochs = 500 if(train_style == 'fixed_future') else 100
+    pretraining_epochs = 500 if(train_style == 'fixed_future') else 100
+
+    #results_dir = './cycliclr_each_results/'
+    #results_dir = './new_cycliclr_each_results/'
+    #results_dir = './steplr_each_results/'
+    results_dir = './new_steplr_each_results/'
+
+    #for ns in ['1_each', '2_each', '3_each', '4_each', '5_each']:
+    #for ns in ['6_each', '7_each', '8_each', '9_each', '10_each']:
+
+    #TODO Make path, train_style, pretraining method, etc. stick for each run
+    #for i in range(1, 21, 1):
+    #for i in range(1, 5, 1):
+    #for i in range(5, 10, 1):
+    #for i in range(10, 15, 1):
+    #for i in range(15, 19, 1):
+    #for i in range(19, 21, 1):
+    #for i in [50, 100, 500]:
+    #for i in [50, 100]:
+    for i in [500]:
+        ns = '{}_each'.format(i)
+    #for ns in ['1_each', '2_each', '3_each', '4_each', '5_each',
+    #           '6_each', '7_each', '8_each', '9_each', '10_each']:
     #for ns in [100, 500, 1000, 5000]:
-    #for ns in [10, 50, 100, 500, 1000]:
-    for ns in [10, 50, 100]:
+    #for ns in [10, 50, 100, 500, 1000, 5000]:
+    #for ns in [10, 50, 100]:
     #for ns in [100, 500, 1000]:
     #for ns in [500, 1000, 5000]:
     #for ns in [100]:#, 5000]:
@@ -1220,7 +1252,17 @@ if __name__ == "__main__":
         train_args = config['args']
         train_args['num_samples'] = ns
         train_args['model_name'] = model_name
+
         train_args['pretraining_num_samples'] = pns
+        train_args['contrastive_loss'] = contrastive_loss
+        train_args['train_style'] = train_style
+        train_args['sim_time'] = sim_time
+        train_args['epochs'] = epochs
+        train_args['pretrain_epochs'] = pretraining_epochs
+
+        train_args['results_dir'] = results_dir
+
+
         device = train_args['device']
         prefix = train_args['flnm'] + "_" + train_args['train_style']
         train_args['results_dir'] = train_args['results_dir'] + str(train_args['num_samples']) + "_" + str(train_args['pretraining_num_samples']) + "/"

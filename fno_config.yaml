@@ -12,19 +12,22 @@ args:
     #results_dir: './test_sweep/'
     #results_dir: './l1_new_data_results/'
     #results_dir: './l2_new_data_results/'
-    results_dir: './next_compare_new_data_results/'
+    #results_dir: './next_compare_new_data_results/'
+    #results_dir: './steplr_each_results/'
+    results_dir: './new_cycliclr_each_results/'
     #results_dir: './rollout_results/'
     #results_dir: './tune_initial_step_PICL_AS_RESULTS/'
     #results_dir: './passthrough_initial_step_PICL_AS_RESULTS/'
 
     #tau: 'mean'
-    #tau: 1   # I think it was this one...
-    tau: 5
+    tau: 1   # I think it was this one...
+    #tau: 5
     #tau: 100
     load_pretrained: True
     #load_pretrained: False
     #pretrained_path: './PRETRAINED_MODELS/'
     pretrained_path: './NEW_PRETRAINED_MODELS/'
+    #pretrained_path: './INITIAL_STEP10_NEW_PRETRAINED_MODELS/'
 
     #forcing_term: 'full'
     #forcing_term: 'non_td'
@@ -35,6 +38,7 @@ args:
 
     initial_step: 1
     #initial_step: 2
+    #initial_step: 10
     rollout_length: 5
     t_train: 200
     validate: 1
@@ -46,7 +50,7 @@ args:
     data_name: 'finetune_new_long_xwide_no_forcing_advection_2000.h5'
     flnm: 'all'
 
-    base_path: '/media/mlai/DATA/PRETRAINING_NUERAL_OPERATOR_RESULTS/PretrainingNeuralOperators/data_generation/pde_data/'
+    base_path: '/home/cooper/1D_PDE_DATA/'
     reduced_resolution: 4
     reduced_resolution_t: 4
     reduced_batch: 1
@@ -58,32 +62,33 @@ args:
     # Optimizer
     batch_size: 32
     learning_rate: 1.e-2
-    weight_decay: 1.e-5
+    #weight_decay: 1.e-8
+    weight_decay: 1.e-6
     scheduler_step: 100
     scheduler_gamma: 0.5
     #epochs: 5
-    epochs: 100
-    #epochs: 500
+    #epochs: 100
+    epochs: 500
 
     pretrain_done: False
     #pretraining_batch_size: 256
     pretraining_batch_size: 512
     #pretraining_batch_size: 1024
     pretrain_learning_rate: 1.e-2
-    pretrain_weight_decay: 1.e-5
+    pretrain_weight_decay: 1.e-8
     pretrain_scheduler_step: 5
     #pretrain_scheduler_step: 100
     pretrain_scheduler_gamma: 0.5
-    pretrain_epochs: 100
-    #pretrain_epochs: 500
+    #pretrain_epochs: 100
+    pretrain_epochs: 500
     num_seeds: 5
 
     # Sim samples
     num_t: 200
     num_x: 200
-    sim_time: 20 
+    #sim_time: 20 
     #sim_time: 15
-    #sim_time: -1 # Not supported for next-step training
+    sim_time: -1 # Not supported for next-step training
 
     #num_samples: 10
     #num_samples: 50
@@ -95,11 +100,11 @@ args:
     #num_samples: 5000
     #num_samples: 8000
     #pretraining_num_samples: 0
-    pretraining_num_samples: 100
+    #pretraining_num_samples: 100
     #pretraining_num_samples: 500
     #pretraining_num_samples: 1000
     #pretraining_num_samples: 2000
-    #pretraining_num_samples: 5000
+    pretraining_num_samples: 5000
     #pretraining_num_samples: 8000
 
     # FNO

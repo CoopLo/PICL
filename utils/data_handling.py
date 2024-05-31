@@ -209,6 +209,18 @@ class TransformerOperatorDataset(Dataset):
         self.debug = debug
         self.split = split
 
+        self.heat_dist = {0.2: [], 0.5: [], 1.0: [],  2.0: [],  5.0: []}
+        self.burger_alpha_dist = [0.5, 1.0, 2.0, 5.0]
+        self.burger_beta_dist = [0.2, 0.5, 1.0,  2.0,  5.0 ]
+        self.burger_dist = {}
+        for alpha in self.burger_alpha_dist:
+            for beta in self.burger_beta_dist:
+                self.burger_dist[(alpha, beta)] = []
+        self.adv_dist = {0.5: [], 1.0: [],  2.0: [],  5.0: []}
+        print(self.heat_dist)
+        print(self.burger_dist)
+        print(self.adv_dist)
+
         # Load entire validation or test sets
         if(split == 'train'):
             val_ratio = 0.0
@@ -230,24 +242,99 @@ class TransformerOperatorDataset(Dataset):
             #for key in f.keys():
             #    if(filename in key):
             #        data_list.append(key)
+            #if('Heat' in filename):
+            #    data_list = [key for key in f.keys() if(len(key.split("_")) == 3)]
+            #else:
+            #    data_list = [key for key in f.keys()]
+            #np.random.shuffle(data_list)
+
+            # Get data list
+            torch.manual_seed(seed)
+            np.random.seed(seed)
             if('Heat' in filename):
-                data_list = [key for key in f.keys() if(len(key.split("_")) == 3)]
+                data_list = [key for key in f.keys() if(float(key.split("_")[-1]) != 0.1)] # Don't have this in fine-tune set
+                if(len(list(f.keys())[0].split("_")) == 3):
+                    data_list = [key for key in f.keys()]
+                elif(len(list(f.keys())[0].split("_")) == 4):
+                    data_list = [key for key in f.keys()]
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        betas.append(float(split_key[-1]))
+                    print("\n\nHEAT COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(betas))
+                    print()
+            if('Burgers' in filename):
+                data_list = [key for key in f.keys() if(float(key.split("_")[-1]) != 0.1)] # Don't have this in fine-tune set
+                alphas = []
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        alphas.append(float(split_key[2]))
+                        betas.append(float(split_key[3]))
+                    print("\n\nBURGERS COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(alphas))
+                    print(np.unique(betas))
+                    print()
+                    print()
             else:
                 data_list = [key for key in f.keys()]
-            np.random.shuffle(data_list)
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        betas.append(float(split_key[-1]))
+                    print("\n\nADVECTION COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(betas))
+                    print()
         else:
             #data_list = list([key for key in f.keys() if("KdV" not in key))
             data_list = [key for key in f.keys()]
             np.random.shuffle(data_list)
 
-        self.data_list = data_list
-
         # Get target split. Seeding is required to make this reproducible.
         # This splits each run, lets try a better shuffle
         if(num_samples is not None):
-            data_list = data_list[:num_samples]
+            if(isinstance(num_samples, int)):
+                data_list = data_list[:num_samples]
+            else:
+                print(num_samples)
+                num = int(num_samples.split("_")[0])
+                #print(num)
+                #print(data_list[:10])
+                for d in data_list:
+                    if('Heat' in d):
+                        beta = float(d.split("_")[-1])
+                        if(len(self.heat_dist[beta]) < num):
+                            self.heat_dist[beta].append(d)
+                    if('Burger' in d):
+                        beta = float(d.split("_")[-1])
+                        alpha = float(d.split("_")[-2])
+                        if(len(self.burger_dist[(alpha, beta)]) < num):
+                            self.burger_dist[(alpha, beta)].append(d)
+                    if('Adv' in d):
+                        beta = float(d.split("_")[-1])
+                        if(len(self.adv_dist[beta]) < num):
+                            self.adv_dist[beta].append(d)
+
+                if('Heat' in data_list[0]):
+                    data_list = list([v for value in self.heat_dist.values() for v in value])
+                elif('Burgers' in data_list[0]):
+                    data_list = list([v for value in self.burger_dist.values() for v in value])
+                elif('Adv' in data_list[0]):
+                    data_list = list([v for value in self.adv_dist.values() for v in value])
+
+        self.data_list = data_list
         train_idx = int(len(data_list) * (1 - test_ratio - val_ratio))
         val_idx = int(len(data_list) * (1-test_ratio))
+
+        if(self.debug and split == 'train'):
+            print()
+            print(self.data_list)
+            print()
+
 
         # Make sure no data points occur in two splits
         assert not (bool(set(self.data_list[:train_idx]) & \
@@ -486,6 +573,18 @@ class TransformerMultiOperatorDataset(Dataset):
         self.debug = debug
         self.split = split
 
+        self.heat_dist = {0.2: [], 0.5: [], 1.0: [],  2.0: [],  5.0: []}
+        self.burger_alpha_dist = [0.5, 1.0, 2.0, 5.0]
+        self.burger_beta_dist = [0.2, 0.5, 1.0,  2.0,  5.0 ]
+        self.burger_dist = {}
+        for alpha in self.burger_alpha_dist:
+            for beta in self.burger_beta_dist:
+                self.burger_dist[(alpha, beta)] = []
+        self.adv_dist = {0.5: [], 1.0: [],  2.0: [],  5.0: []}
+        print(self.heat_dist)
+        print(self.burger_dist)
+        print(self.adv_dist)
+
         # Load entire validation or test sets
         if(split == 'train'):
             val_ratio = 0.0
@@ -525,10 +624,19 @@ class TransformerMultiOperatorDataset(Dataset):
             torch.manual_seed(seed)
             np.random.seed(seed)
             if('heat' in df):
+                data_list = [key for key in f.keys() if(float(key.split("_")[-1]) != 0.1)] # Don't have this in fine-tune set
                 if(len(list(f.keys())[0].split("_")) == 3):
                     data_list = [key for key in f.keys()]
                 elif(len(list(f.keys())[0].split("_")) == 4):
                     data_list = [key for key in f.keys()]
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        betas.append(float(split_key[-1]))
+                    print("\n\nHEAT COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(betas))
+                    print()
             if('burgers' in df):
                 data_list = [key for key in f.keys() if(float(key.split("_")[-1]) != 0.1)] # Don't have this in fine-tune set
                 alphas = []
@@ -545,6 +653,14 @@ class TransformerMultiOperatorDataset(Dataset):
                     print()
             else:
                 data_list = [key for key in f.keys()]
+                betas = []
+                if(self.debug):
+                    for key in data_list:
+                        split_key = key.split("_")
+                        betas.append(float(split_key[-1]))
+                    print("\n\nADVECTION COEFFICIENT DISTRIBUTION:")
+                    print(np.unique(betas))
+                    print()
             np.random.shuffle(data_list)
 
             self.data_list = data_list
@@ -552,7 +668,38 @@ class TransformerMultiOperatorDataset(Dataset):
             # Get target split. Seeding is required to make this reproducible.
             # This splits each run, lets try a better shuffle
             if(num_samples is not None):
-                data_list = data_list[:num_samples]
+                if(isinstance(num_samples, int)):
+                    data_list = data_list[:num_samples]
+                else:
+                    print(num_samples)
+                    num = int(num_samples.split("_")[0])
+                    #print(num)
+                    #print(data_list[:10])
+                    for d in data_list:
+                        #print(d)
+                        if('Heat' in d):
+                            beta = float(d.split("_")[-1])
+                            if(len(self.heat_dist[beta]) < num):
+                                self.heat_dist[beta].append(d)
+                        if('Burger' in d):
+                            beta = float(d.split("_")[-1])
+                            alpha = float(d.split("_")[-2])
+                            if(len(self.burger_dist[(alpha, beta)]) < num):
+                                self.burger_dist[(alpha, beta)].append(d)
+                        if('Adv' in d):
+                            beta = float(d.split("_")[-1])
+                            if(len(self.adv_dist[beta]) < num):
+                                self.adv_dist[beta].append(d)
+
+                    if('Heat' in data_list[0]):
+                        data_list = list([v for value in self.heat_dist.values() for v in value])
+                    elif('Burgers' in data_list[0]):
+                        data_list = list([v for value in self.burger_dist.values() for v in value])
+                    elif('Adv' in data_list[0]):
+                        data_list = list([v for value in self.adv_dist.values() for v in value])
+                    #raise
+            #raise
+
             train_idx = int(len(data_list) * (1 - test_ratio - val_ratio))
             val_idx = int(len(data_list) * (1-test_ratio))
             if(split == "train"):
@@ -563,6 +710,9 @@ class TransformerMultiOperatorDataset(Dataset):
                 self.data_list = np.array(data_list[val_idx:])
             else:
                 raise ValueError("Select train, val, or test split. {} is invalid.".format(split))
+            #if('Adv' in self.data_list[0]):
+            #    print(self.data_list)
+            #    raise
 
             # Hold on to all of the datas
             self.all_data_list.append(self.data_list)
@@ -628,7 +778,7 @@ class TransformerMultiOperatorDataset(Dataset):
 
         self.data = torch.Tensor(np.array(self.data))
         self.grid = torch.Tensor(np.array(self.grid))
-        self.all_data_list = np.array(self.all_data_list).flatten()
+        #self.all_data_list = np.array(self.all_data_list).flatten()
         self.all_operator_maps = torch.Tensor(np.array(self.all_operator_maps).reshape((-1,3))).float()
         self.time = torch.Tensor(self.time)
         print("\nNUMBER OF SAMPLES: {}".format(len(self.available_idxs)))
@@ -1588,7 +1738,7 @@ class Dataset2D(Dataset):
                 if(len(self.available_idxs) != 0): #TODO Make this robust to initial step
                     idxs += self.available_idxs[-1] + 1 if(self.train_style == 'next_step') else \
                             self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
-	    					self.available_idxs[-1] + 1
+                            self.available_idxs[-1] + 1
                 self.available_idxs.extend(idxs)
 
         elif(self.train_style == 'fixed_future'): # Only need to keep track of total number of valid samples
@@ -1936,7 +2086,7 @@ class MultiDataset2D(Dataset):
                     if(len(self.available_idxs) != 0): #TODO Make this robust to initial step
                         idxs += self.available_idxs[-1] + 1 if(self.train_style == 'next_step') else \
                                 self.available_idxs[-1] + 1 + self.rollout_length if(self.train_style == 'rollout') else \
-	        					self.available_idxs[-1] + 1
+                                self.available_idxs[-1] + 1
                     self.available_idxs.extend(idxs)
                     self.new_available_idxs.extend(idxs)
 
